@@ -1,0 +1,39 @@
+---
+description: SchoolOS project engineering rules (authoritative for this repository)
+alwaysApply: true
+---
+
+# SchoolOS engineering rules
+
+## What SchoolOS is
+- SchoolOS is an independent, commercial, multi-tenant K-12 device security and management SaaS platform.
+- It is not a plugin, reseller product, or add-on to GoGuardian or any competing product, and must not depend on one.
+- Initial integration target: managed ChromeOS devices via Google's published APIs. Google is an integration provider, not the owner of the product.
+- Long-term goal: independent device enforcement through our own Linux-based educational OS and native Go agents.
+
+## Authoritative sources
+- Next.js, TypeScript, PostgreSQL, and the documented architecture are authoritative. Do not substitute frameworks, databases, or patterns without an accepted ADR.
+- Before implementing a feature, read the relevant docs:
+  - `docs/SYSTEM_ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/SECURITY_MODEL.md`
+  - `docs/PRIVACY_AND_COMPLIANCE.md` for anything touching student-related data
+  - `docs/CHROMEOS_INTEGRATION.md` for anything touching Google APIs or the extension
+  - `docs/DECISIONS/` for prior decisions, `docs/OPEN_QUESTIONS.md` for known unknowns
+  - The current milestone plan in `docs/` (e.g. `docs/M1_IMPLEMENTATION_PLAN.md`)
+- When a significant decision changes, update the affected docs and add or supersede an ADR in the same change. Do not silently diverge from documentation.
+
+## Non-negotiable requirements
+- **Multi-tenancy and strict organization isolation are mandatory.** Every tenant-scoped table has `organization_id`, row-level security enabled and forced, and isolation tests. Every request enforces server-side authorization in addition to RLS.
+- **Security, privacy, maintainability, and testing take priority over development speed.**
+- **Never weaken a security requirement to make a feature easier to implement.** If a requirement blocks a feature, stop and raise it; changing it requires an ADR.
+- **All device commands must have an auditable lifecycle:** persisted before dispatch, append-only state transitions, real provider/agent-reported status, and audit log entries.
+- **Never invent API capabilities or claim an untested integration works.** Cite official documentation and use the labels in `docs/CHROMEOS_INTEGRATION.md` (`[Verified-Docs]`, `[Verified-Tenant]`, `[Assumption]`, `[Unknown]`). If a capability is unknown, stop and ask.
+- **Never confuse simulated functionality with real device enforcement.** Mocks and fakes are for tests and clearly flagged demo organizations only. UI, API, logs, and docs must never present a simulated, dispatched-but-unconfirmed, or unsupported action as enforced or successful.
+
+## Working rules
+- No secrets, credentials, keys, or real student data in the repository, fixtures, logs, or test output.
+- No student PII in application logs or error messages.
+- Do not introduce microservices, new infrastructure (e.g. Redis), or new external services during the MVP without an ADR.
+- Do not add AI/ML prediction or scoring of students.
+- Prefer simple, explicit, typed code. Domain modules must not import provider code directly.
+- Write tests for authorization, tenant isolation, audit, and command lifecycle changes in the same change as the code.
+- Do not install packages or generate application code unless the current task asks for it.
