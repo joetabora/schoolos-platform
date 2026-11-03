@@ -127,7 +127,12 @@ Next.js is pinned to **16.4.3**. 16.4.4 was published inside the 7-day `minimumR
 
 Import-boundary rules (already active, even though some folders do not exist yet):
 
-- `pg` and `kysely` may only be imported from `src/platform/db` ([ADR-0014](DECISIONS/0014-database-tooling.md)).
+- `pg` and `kysely` may only be imported from `src/platform/db` ([ADR-0014](DECISIONS/0014-database-tooling.md)). The transaction wrapper invariant for that module:
+  - One centrally managed `pg.Pool` and one root Kysely instance.
+  - `withTenant` / `withUser` / `withSystem` own the Kysely transaction lifecycle.
+  - Handlers receive only a Kysely `Transaction`, never the pool, the root instance, or a raw `pg` client.
+  - Transaction-bound objects must not escape the handler or outlive the transaction.
+  - Nested `transaction()` / `startTransaction()` / `connection()` are rejected so they cannot commit the outer transaction early. If a database operation fails, the wrapper fails the request even when the handler catches the original exception (aborted-transaction probe, SQLSTATE `25P02`).
 - `@supabase/supabase-js` and `@supabase/ssr` may only be imported from `src/platform/auth` ([ADR-0004](DECISIONS/0004-authentication-provider.md), [ADR-0016](DECISIONS/0016-session-model.md)).
 - `src/modules/**` cannot import `src/providers/**` ([ADR-0005](DECISIONS/0005-control-plane-provider-separation.md)).
 - UI under `app/` (except `app/api/**` and `app/status/**`), `src/components/`, and `src/lib/` cannot import server env, logging, or database modules. Domain modules cannot import `src/providers/**`. These restrictions are asserted by `tests/unit/eslint-boundaries.test.ts` against ESLint's effective config.

@@ -1,15 +1,18 @@
 # ADR-0014: Database tooling — dbmate, Kysely, node-postgres
 
-- **Status:** Proposed. Becomes Accepted only after the compatibility spike below passes.
+- **Status:** Accepted
 - **Date:** 2026-11-02
 - **Deciders:** Founding engineering team
 - **Related:** ADR-0003, ADR-0013; ARCHITECTURE_READINESS_REVIEW D-4; OPEN_QUESTIONS T-13
+- **Spike:** [`SPIKE_DB_TOOLING_REPORT.md`](../SPIKE_DB_TOOLING_REPORT.md)
 
 ## Context
 
 We need plain, reviewable SQL migrations (RLS policies, functions, triggers, grants), typed queries in TypeScript, and strict control over connections and transactions so tenant context can't be bypassed.
 
-## Decision (proposed)
+The 2026-11-02 compatibility spike passed all checks. Binding a per-transaction Kysely instance to a raw `pg` client (the original proposed wording) let a nested `transaction()` commit the outer transaction early and let an escaped handle read another tenant's rows after the pooled client was reused. Kysely's own `Transaction` prevents both. PostgreSQL also turns `COMMIT` of an aborted transaction into a silent `ROLLBACK`, so a handler that catches a database error would otherwise succeed the request while its writes disappear.
+
+## Decision
 
 | Concern | Tool | Role |
 | --- | --- | --- |
@@ -17,26 +20,40 @@ We need plain, reviewable SQL migrations (RLS policies, functions, triggers, gra
 | Typed queries | **Kysely** | Typed query builder for application CRUD |
 | Driver, pool, transactions | **node-postgres (`pg`)** | The only connection and transaction layer (ADR-0013) |
 
-Rules (these hold whatever the spike outcome):
+### Transaction wrapper
+
+`src/platform/db` holds:
+
+- one centrally managed `pg.Pool`
+- one centrally managed root `Kysely` instance
+
+That module owns transaction creation and lifecycle. `withTenant` / `withUser` / `withSystem` open a Kysely-managed transaction (`db.transaction().execute`), set tenant context with `set_config(..., true)` as the first statement, and pass handlers **only** a Kysely `Transaction` object.
+
+Handlers never receive the root `Kysely` instance, a raw `pg` client, or the connection pool. Nested `transaction()`, `startTransaction()`, and `connection()` calls on the `Transaction` object are rejected at compile time (`never`) and at runtime. A handle used after commit or rollback is rejected and cannot be used to query another tenant after the connection is reused.
+
+If a database operation fails, the wrapper fails the request even if application code catches the original exception. After the handler returns, the wrapper probes the connection; PostgreSQL SQLSTATE `25P02` (aborted transaction) is converted to a wrapper error so a swallowed error cannot commit as success. PostgreSQL would otherwise turn that `COMMIT` into a silent `ROLLBACK`.
+
+Tenant context is transaction-local only (`SET LOCAL` / `set_config(name, value, true)`). Missing tenant context denies access (RLS fail-closed). Session-level `SET` is banned by lint and review.
+
+### Other rules
+
 - **Direct SQL** is used for RLS policies, grants, functions, triggers, advisory locks, audit chain operations, and anything security-sensitive. These live in migrations or in reviewed SQL in `src/platform/db` and `src/platform/audit`, not hidden behind a builder.
-- **Every tenant query runs inside the explicit tenant transaction wrapper** (`withTenant`, `withUser`, `withSystem`). Kysely instances are only constructed inside those wrappers, bound to the transaction's single `pg` client.
-- **Transaction-local settings only** (`SET LOCAL` / `set_config(name, value, true)`). Session-level `SET` is banned by lint and review.
-- **Application modules never create database connections.** Only `src/platform/db` imports `pg` or creates Kysely instances (enforced by lint import rules).
+- **Application modules never create database connections.** Only `src/platform/db` imports `pg` or constructs Kysely instances (enforced by lint import rules).
 - No ORM that manages schema, migrations, or RLS implicitly.
+- dbmate migrations that cannot run in a transaction (`CREATE INDEX CONCURRENTLY`) use `transaction:false` and contain that statement alone.
+- `kysely-codegen` generates types from the migrated database; CI runs `--verify` so they stay in sync.
 
-## Compatibility spike (time-boxed: 2 working days)
+## Compatibility spike (completed 2026-11-02)
 
-Run in a throwaway branch against Docker `postgres:18.6`. Every item must pass for this ADR to be Accepted:
+Run against Docker `postgres:18.6`. Every item passed. Evidence: [`SPIKE_DB_TOOLING_REPORT.md`](../SPIKE_DB_TOOLING_REPORT.md).
 
-1. dbmate applies and rolls back migrations on PostgreSQL 18, including `CREATE ROLE`, `CREATE POLICY`, `ALTER TABLE ... FORCE ROW LEVEL SECURITY`, `SECURITY DEFINER` functions, and triggers.
-2. dbmate's migration-transaction behaviour is understood and documented (which statements must run outside a transaction, if any).
-3. dbmate can be installed reproducibly in CI and the container build at a pinned version (installation method recorded).
-4. A Kysely instance bound to one `pg` client inside `BEGIN … SET LOCAL … COMMIT` runs all queries on that client, so RLS sees the tenant settings (verified by an RLS-protected table returning only the tenant's rows).
-5. Kysely raw `sql` fragments work for advisory locks (`pg_advisory_xact_lock`) and `set_config(..., true)`.
-6. A typed-schema approach for Kysely is chosen (generated from the database or hand-maintained) and kept in sync by a CI check.
-7. Concurrency check: interleaved transactions for two tenants on one `pg.Pool` never cross-read (an early version of review TST-3).
-
-If any item fails, record the failure here and propose an alternative in a superseding ADR before M1 step 2.
+1. dbmate applies and rolls back migrations on PostgreSQL 18, including `CREATE ROLE`, `CREATE POLICY`, `ALTER TABLE ... FORCE ROW LEVEL SECURITY`, `SECURITY DEFINER` functions, and triggers. **Pass.**
+2. dbmate's migration-transaction behaviour is understood and documented. **Pass.** Default migrations are atomic, including `CREATE ROLE`. `CREATE INDEX CONCURRENTLY` must be the only statement in a `transaction:false` file.
+3. dbmate can be installed reproducibly in CI at a pinned version (npm package 2.37.0 with per-platform binaries; `--frozen-lockfile` on `linux/arm64` and `linux/amd64`). **Pass.**
+4. A Kysely `Transaction` from one root instance, on one `pg` connection, inside `BEGIN … set_config(..., true) … COMMIT`, runs all queries on that client so RLS sees the tenant settings. **Pass.**
+5. Kysely raw `sql` fragments work for advisory locks (`pg_advisory_xact_lock`) and `set_config(..., true)`. **Pass.**
+6. Types generated by `kysely-codegen`; `--verify` fails on drift; TypeScript strictness kept. **Pass.**
+7. Interleaved transactions for two tenants on one `pg.Pool` never cross-read. **Pass.**
 
 ## Alternatives considered
 
@@ -45,12 +62,26 @@ If any item fails, record the failure here and propose an alternative in a super
 | Prisma / Drizzle migrations | Integrated | Schema-DSL-first; RLS, grants, and functions are second-class or hidden |
 | Raw `pg` only | Maximum control | No compile-time query typing |
 | node-pg-migrate / graphile-migrate | JS-native | dbmate's plain SQL files are easiest to review for security |
+| Per-transaction Kysely bound to a raw `pg` client | Matches an earlier draft of this ADR | Nested `transaction()` commits the outer transaction and drops tenant context; escaped handles can read another tenant after reuse |
 
 ## Consequences
 
 - Two tools to learn (dbmate, Kysely), both thin.
-- Database types must be kept in sync with migrations (spike item 6).
+- Database types must be kept in sync with migrations (`kysely-codegen --verify` in CI).
+- M1 `src/platform/db` must copy the wrapper rules above, including the aborted-transaction probe and handle-lifetime tests.
+- Pipeline migrations should pass dbmate `--migration-lock`.
+
+### Remaining risks (not validated by the spike)
+
+These are still open. Do not treat them as proven.
+
+- **AWS RDS role and RLS behaviour** is untested. RDS's master user is `rds_superuser`, not a true superuser; whether it or other RDS-managed roles bypass RLS is unknown. Repeat V9/V10 and TST-3 against `pg.Pool` → RDS in staging (ADR-0013).
+- **Production TLS** is untested. The spike used `sslmode=disable` on localhost. RDS requires TLS; dbmate and `pg` TLS settings must be verified in M1 step 10.
+- **Failed `ROLLBACK` leaving a dirty pooled connection** could not be induced. If `ROLLBACK` fails without the connection dying, the client might return to the pool with leftover session state. M1 should treat wrapper errors as a broken client, or assert empty tenant context at transaction start.
+- **Cluster-wide role migration collisions in CI.** `CREATE ROLE` is cluster-scoped. Two databases in the same PostgreSQL cluster cannot both apply the role migrations. Use one database per cluster in CI, or move role creation to bootstrap.
 
 ## Verification
 
-Spike results are recorded in this ADR, which then moves to Accepted or is superseded.
+- Spike report: [`SPIKE_DB_TOOLING_REPORT.md`](../SPIKE_DB_TOOLING_REPORT.md).
+- Spike tests: handle lifetime after commit/rollback; captured handle cannot read another tenant after reuse; swallowed database errors fail the wrapper (`TransactionAbortedError`) and roll back earlier writes.
+- M1: TST-1 (RLS coverage), no-context deny, TST-3 (pool leak) against Docker and against RDS in staging; CI type-sync `--verify`; lint forbidding `pg`/Kysely outside `src/platform/db`.

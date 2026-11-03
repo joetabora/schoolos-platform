@@ -124,7 +124,7 @@ The decisions in §7 were ratified and recorded as ADRs. The findings in §1–�
 | D-1 Tooling | [ADR-0012](DECISIONS/0012-tooling.md) | Accepted |
 | D-2 Hosting | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md), [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) | Accepted |
 | D-3 Postgres/UUID | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted |
-| D-4 DB tooling | [ADR-0014](DECISIONS/0014-database-tooling.md) | Proposed (spike) |
+| D-4 DB tooling | [ADR-0014](DECISIONS/0014-database-tooling.md) | Accepted (2026-11-02 spike; [report](SPIKE_DB_TOOLING_REPORT.md)) |
 | D-5 Audit | [ADR-0017](DECISIONS/0017-audit-log-design.md) | Accepted |
 | D-6 Org resolution | [ADR-0015](DECISIONS/0015-organization-resolution.md) | Accepted |
 | D-7 Support access | [ADR-0019](DECISIONS/0019-support-access-grants.md) | Accepted (M5) |
