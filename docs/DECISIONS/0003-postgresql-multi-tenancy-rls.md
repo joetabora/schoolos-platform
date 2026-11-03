@@ -28,7 +28,7 @@ Multi-tenancy is required from day one. Cross-tenant exposure is the highest-imp
 
 ## Consequences
 
-- Connection pooler must support transaction-mode semantics with `SET LOCAL` (OPEN_QUESTIONS T-5).
+- Connection pooler must support transaction-mode semantics with `SET LOCAL`. Resolved by [ADR-0013](0013-database-hosting-postgres-version-uuid-pooling.md): a standard `pg` Pool with direct RDS connectivity; any future external pooler must pass the concurrency tests first.
 - Every new table needs an RLS policy and isolation tests; CI check enforces that RLS is enabled on tenant tables.
 - Supports moving a large customer to a dedicated database later with the same schema.
 

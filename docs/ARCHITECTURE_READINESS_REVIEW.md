@@ -115,6 +115,26 @@ Each becomes an ADR (Proposed → Accepted) before the step that depends on it.
 | D-7 | Support access mechanism (C-6) | Grants via `authorize()`, no membership. Implementation deferred to M5. | — (M5) |
 | D-8 | Session model | IdP session plus a SchoolOS-side session record (for idle/absolute timeouts, step-up timestamp, forced revocation) if A-1 to A-3 fail | 3 |
 
+## 7a. Ratification status (added 2026-11-02)
+
+The decisions in §7 were ratified and recorded as ADRs. The findings in §1–§6 above are kept as written as the point-in-time review record.
+
+| Decision | ADR | Status |
+| --- | --- | --- |
+| D-1 Tooling | [ADR-0012](DECISIONS/0012-tooling.md) | Accepted |
+| D-2 Hosting | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md), [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) | Accepted |
+| D-3 Postgres/UUID | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted |
+| D-4 DB tooling | [ADR-0014](DECISIONS/0014-database-tooling.md) | Proposed (spike) |
+| D-5 Audit | [ADR-0017](DECISIONS/0017-audit-log-design.md) | Accepted |
+| D-6 Org resolution | [ADR-0015](DECISIONS/0015-organization-resolution.md) | Accepted |
+| D-7 Support access | [ADR-0019](DECISIONS/0019-support-access-grants.md) | Accepted (M5) |
+| D-8 Sessions | [ADR-0016](DECISIONS/0016-session-model.md) | Proposed (spike; fixed requirements binding) |
+
+Effect on findings:
+- C-1, C-2, DB-4 resolved by ADR-0017. C-6 resolved by ADR-0019. C-7 resolved by ADR-0013. C-8 reduced to the IaC tool and egress decisions (T-16, T-17).
+- A-1 is confirmed from Supabase docs (`aal`/`amr` claims). A-2 and A-3 no longer apply, because SchoolOS enforces step-up and session limits itself (ADR-0016). A-4 is narrowed to `pg` Pool → RDS. A-5 no longer applies (app-side UUIDv7).
+- S-14 resolved by design (RDS for data, Supabase Data API unused and tested). DEP-1 and DEP-5 resolved (AWS, ECS Fargate). DEP-4 resolved (`pg` Pool).
+
 ## 8. Corrections applied in this change
 
 Only pure contradictions were corrected. Direction and decisions are unchanged.

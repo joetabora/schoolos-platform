@@ -81,6 +81,9 @@ See [`DATA_MODEL.md`](DATA_MODEL.md#4-organization-isolation-and-row-level-secur
 ## 4. Frontend
 
 - **Next.js App Router**, React Server Components where it simplifies data fetching; client components for interactive tables and forms.
+- **Tailwind CSS** and **shadcn/ui** (components copied into and owned by the repo). Toolchain: pnpm, Node.js LTS (pinned), strict TypeScript, single Next.js app. See [ADR-0012](DECISIONS/0012-tooling.md).
+- Org-scoped UI routes are `/o/{orgSlug}/...` ([ADR-0015](DECISIONS/0015-organization-resolution.md)).
+- The browser holds no authentication tokens; only an opaque HttpOnly session cookie ([ADR-0016](DECISIONS/0016-session-model.md)).
 - The UI calls **the same REST API** that external integrations will use (no hidden internal-only endpoints for core actions). Server components may call the service layer directly, but must go through the same authorization functions.
 - Design requirements:
   - Every device attribute displays its source and freshness ("Google, 14 min ago").
@@ -105,7 +108,7 @@ src/platform/            Cross-cutting: config, logging, crypto, tenant context,
 Rules:
 - Handlers never contain business logic or SQL.
 - Modules never import from `src/providers/*` directly; they depend on interfaces in `src/modules/<module>/ports.ts`, wired at startup.
-- Only `src/platform/db` opens database connections, and it always sets tenant context.
+- Only `src/platform/db` opens database connections, and it always sets tenant context. Application modules never create their own connections or query-builder instances ([ADR-0014](DECISIONS/0014-database-tooling.md)).
 
 ### 5.2 REST API
 
@@ -126,7 +129,11 @@ This is a separate **device gateway** process introduced in M6/M7. It shares the
 
 ## 6. Database
 
-- **PostgreSQL** (managed service in production; version ≥ 15 for `MERGE`, improved RLS performance and `security_invoker` views).
+- **AWS RDS for PostgreSQL, major version 18**, in isolated private subnets in `us-east-2`. Local development and CI use the Docker official `postgres` image at the same pinned major and minor version ([ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md)).
+- **Supabase is not used as a database** and its generated Data API is not used. All SchoolOS data, including authorization data, lives in RDS.
+- **UUIDv7 primary keys are generated in the application**; the schema doesn't depend on native PostgreSQL UUIDv7.
+- **Connection pooling:** a standard `pg` `Pool` per process with direct private TLS connectivity to RDS. No RDS Proxy or external pooler until a measured need is recorded in an ADR, and only after the `SET LOCAL` and cross-tenant concurrency tests pass against it.
+- **Tooling (proposed, pending spike):** dbmate for plain SQL migrations, Kysely for typed queries, node-postgres for connections and transactions. Direct SQL is kept for RLS, policies, triggers, functions, advisory locks, and audit operations ([ADR-0014](DECISIONS/0014-database-tooling.md)).
 - Schema migrations are versioned SQL files, reviewed like code, applied by CI/CD, never by hand in production.
 - RLS enabled and **forced** on all tenant-scoped tables.
 - Application connects as a non-owner role (`app_user`) that cannot bypass RLS. Migrations run as a separate owner role.
@@ -135,22 +142,23 @@ This is a separate **device gateway** process introduced in M6/M7. It shares the
 
 ## 7. Authentication
 
-- **Staff identity:** Supabase Auth is acceptable for MVP (email + password with MFA, and/or OIDC with Google for staff sign-in). It is wrapped behind an internal `AuthProvider` interface:
+- **Staff identity:** Supabase Auth authenticates identity (email + password) and TOTP MFA. OIDC/SAML staff sign-in may be added later. It is wrapped behind an internal `AuthProvider` interface:
   - `verifySession(request) → { userId, authTime, mfa }`
   - `getUser(userId)`
   - `revokeSessions(userId)`
-- **SchoolOS owns authorization.** Users, memberships, and roles live in SchoolOS tables, not in the identity provider's metadata. The IdP only answers "who is this?".
-- Supabase-specific features (e.g. its client-side data API) are **not** used for data access; all data access goes through our server. This keeps migration to another OIDC provider feasible.
-- MFA required for roles that can issue commands or change policy.
-- Session lifetime and re-authentication for sensitive actions (step-up) are defined in SECURITY_MODEL.
+- **SchoolOS owns sessions.** An opaque `__Host-` HttpOnly session cookie maps to a SchoolOS `user_sessions` record that enforces a 30-minute idle timeout, a 12-hour absolute lifetime, MFA gating, fresh-MFA step-up, and revocation, independently of Supabase plan settings. Supabase tokens are verified server-side (JWKS signature with an asymmetric algorithm allow-list, `iss`, `aud`, `exp`, `aal`/`amr`) and stored server-side only, encrypted. They're never placed in browser storage ([ADR-0016](DECISIONS/0016-session-model.md), Proposed pending spike).
+- **SchoolOS owns authorization.** Users, memberships, and roles live in SchoolOS tables, not in the identity provider's metadata. The IdP only answers "who is this?". Token claims such as `role`, `app_metadata`, and `user_metadata` are never used for authorization.
+- Supabase-specific features (its database, generated Data API, client-side data access) are **not** used. All data access goes through our server. This keeps migration to another OIDC provider feasible.
+- TOTP MFA is required for privileged organization roles; fresh MFA (≤ 5 minutes) for sensitive administrative operations. Details are in SECURITY_MODEL §5.
 
-See [ADR-0004](DECISIONS/0004-authentication-provider.md).
+See [ADR-0004](DECISIONS/0004-authentication-provider.md) and [ADR-0016](DECISIONS/0016-session-model.md).
 
 ## 8. Authorization
 
 - **Permission-based RBAC with scopes.** Roles map to permissions (e.g. `device.read`, `command.issue.reboot`, `command.approve`, `policy.write`, `audit.export`). A membership grants a role for an organization, optionally restricted to a set of schools.
 - A single function `authorize(ctx, permission, resource)` is the only way handlers check permissions. It is unit tested with a permission matrix.
-- RLS enforces tenant isolation; school-scope filtering is enforced in the service layer and, for sensitive tables, also by RLS using a `app.current_school_ids` setting.
+- The organization is explicit in every URL, and membership and permissions are re-verified on every request ([ADR-0015](DECISIONS/0015-organization-resolution.md)). SchoolOS support access, from M5, uses temporary grants evaluated by `authorize()` with no permanent membership ([ADR-0019](DECISIONS/0019-support-access-grants.md)).
+- RLS enforces tenant isolation; school-scope filtering is enforced in the service layer and, for sensitive tables, also by RLS using a `app.current_school_ids` setting. In M1, school scope is enforced in the service layer only; RLS school scoping starts with device tables in M2.
 - Deny by default. New endpoints fail a CI check if they do not declare a required permission.
 
 ## 9. Policy engine
@@ -293,37 +301,51 @@ Applies to the SchoolOS native agent on our Linux-based OS and potentially other
 
 | Environment | Purpose | Data |
 | --- | --- | --- |
-| `local` | Developer machines (Docker Compose for PostgreSQL) | Synthetic only |
-| `dev` | Shared integration testing | Synthetic + a dedicated Google test tenant |
-| `staging` | Pre-production, production-like config | Synthetic + Google test tenant; no customer data |
-| `production` | Customers | Customer data |
+| `local` | Developer machines (Docker Compose `postgres:18.x`, same pin as RDS) | Synthetic only |
+| `test` (CI) | Automated tests (ephemeral Docker `postgres:18.x`) | Synthetic only |
+| `dev` | Shared integration testing (AWS `dev` account) | Synthetic + a dedicated Google test tenant (from M2) |
+| `staging` | Pre-production, production-like config (AWS `staging` account) | Synthetic + Google test tenant; no customer data |
+| `production` | Customers (AWS `prod` account) | Customer data |
 
-### Production topology (MVP)
+### Production topology (MVP): AWS `us-east-2`
+
+See [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) for the full decision, including account structure, network layout, and cost controls.
 
 ```mermaid
 flowchart TB
-  Internet --> CDN["CDN / WAF"]
-  CDN --> LB["Managed load balancer, TLS"]
-  LB --> WEB1["Web app instances, 2 or more"]
-  WRK1["Worker instances, 1 or more"] --> PG
-  WEB1 --> PG[("Managed PostgreSQL<br/>PITR, encrypted, private network")]
-  WEB1 --> SEC["Managed secrets / KMS"]
+  Internet --> ALB["Application Load Balancer<br/>HTTPS only, ACM cert, WAF from M5"]
+  subgraph VPC["VPC, 2 Availability Zones"]
+    subgraph Private["Private subnets"]
+      WEB1["ECS Fargate service: web<br/>Next.js, 2+ tasks in prod"]
+      WRK1["ECS Fargate service: worker<br/>no inbound traffic"]
+    end
+    subgraph Isolated["Isolated private subnets"]
+      PG[("RDS PostgreSQL 18<br/>KMS-encrypted, PITR, TLS required")]
+    end
+  end
+  ALB --> WEB1
+  WEB1 --> PG
+  WRK1 --> PG
+  WEB1 --> SEC["Secrets Manager + KMS"]
   WRK1 --> SEC
-  WRK1 --> GAPI["Google APIs"]
-  WEB1 --> OBS["Logs / metrics / traces"]
+  WEB1 --> SUPA["Supabase Auth<br/>identity + TOTP only"]
+  WRK1 --> GAPI["Google APIs, from M2"]
+  WEB1 --> OBS["CloudWatch Logs / metrics"]
   WRK1 --> OBS
 ```
 
 - **Production must run on managed cloud infrastructure under a company-owned account**, never on a developer's home server, homelab, or personal cloud account. See [ADR-0011](DECISIONS/0011-production-infrastructure-separation.md).
-- Cloud provider is an open question; requirements: US regions, managed PostgreSQL with PITR, KMS, private networking, SOC 2 / ISO 27001 attestation for the provider.
-- Separate cloud accounts/projects per environment; no shared credentials across environments.
-- Infrastructure as code from M1; no click-ops in production.
+- **Cloud provider: AWS, region `us-east-2`.** Web and worker run as independent ECS Fargate services from one container image. RDS sits in isolated private subnets with no public access. Secrets are in AWS Secrets Manager and encryption keys in AWS KMS.
+- Separate AWS accounts per environment (AWS Organizations); human access via IAM Identity Center with MFA; CI deploys via GitHub Actions OIDC roles. No static cloud keys.
+- Infrastructure as code from M1 (tool: OPEN_QUESTIONS T-16); no click-ops in staging or production.
+- **Cost control:** AWS Budgets with alerts and Cost Anomaly Detection in every account, mandatory cost tags, and no unnecessary always-on resources during development (dev scaled to zero or stopped when idle, destroyable from IaC). See ADR-0018.
+- Database migrations run as a one-off ECS task in the deploy pipeline, not at app startup.
 - CI/CD: tests, type checks, lint, dependency and secret scanning on every PR; production deploys from `main` via a protected pipeline with manual approval.
 - Redis is introduced only when a concrete need appears (rate limiting across many instances, high-volume queues, pub/sub for live UI). See [ADR-0009](DECISIONS/0009-background-jobs.md).
 
 ## 15. Observability
 
-- Structured JSON logs with `correlation_id`, `organization_id`, `actor_id`; PII redaction at the logger.
+- Structured JSON logs with `correlation_id`, `organization_id`, `actor_id`; PII redaction at the logger. Shipped to CloudWatch Logs with an explicit retention period per log group.
 - Metrics: request latency, job queue depth, provider error rates by code, command state durations.
 - Alerting on: provider auth failures, sync failures per org, command stuck in `dispatching`, RLS policy violations (errors), audit chain verification failures.
 

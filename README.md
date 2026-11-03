@@ -56,9 +56,11 @@ Give schools a trustworthy, transparent, and secure way to manage and protect th
 
 | Concern | Choice | Notes |
 | --- | --- | --- |
-| Web platform | TypeScript, Next.js | Admin/teacher UI and REST API in one deployable app |
-| Database | PostgreSQL | Primary system of record, with row-level security |
-| Authentication | Supabase Auth (initially) | Behind an internal auth interface to limit lock-in ([ADR-0004](docs/DECISIONS/0004-authentication-provider.md)) |
+| Web platform | TypeScript (strict), Next.js, Tailwind CSS, shadcn/ui; pnpm; Node.js 26 LTS | Single app serving UI and REST API, plus a worker entrypoint ([ADR-0012](docs/DECISIONS/0012-tooling.md)) |
+| Database | AWS RDS for PostgreSQL 18 (Docker `postgres:18` locally and in CI) | Primary system of record, with row-level security; app-generated UUIDv7 ([ADR-0013](docs/DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md)) |
+| Database tooling | dbmate, Kysely, node-postgres | Proposed, pending spike ([ADR-0014](docs/DECISIONS/0014-database-tooling.md)) |
+| Authentication | Supabase Auth for identity and TOTP MFA only | SchoolOS-authoritative sessions and authorization ([ADR-0004](docs/DECISIONS/0004-authentication-provider.md), [ADR-0016](docs/DECISIONS/0016-session-model.md)) |
+| Hosting | AWS `us-east-2`: ECS Fargate (web + worker), ALB, RDS, Secrets Manager, KMS | With budgets and cost controls ([ADR-0018](docs/DECISIONS/0018-aws-infrastructure-and-deployment.md)) |
 | Background jobs | PostgreSQL-backed queue first, Redis when needed | [ADR-0009](docs/DECISIONS/0009-background-jobs.md) |
 | Device agent (future) | Go | Cross-platform native agent ([ADR-0007](docs/DECISIONS/0007-go-device-agent.md)) |
 | ChromeOS integration | Google Admin SDK, Chrome Policy API, Chrome Management API, policy-installed Chrome extension | Subject to licensing and access verification |

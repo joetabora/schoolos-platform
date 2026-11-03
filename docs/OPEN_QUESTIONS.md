@@ -38,21 +38,20 @@ Status: `open`, `investigating`, `resolved`, `wont_resolve`.
 
 | ID | Question | Target | Status |
 | --- | --- | --- | --- |
-| T-1 | Which cloud provider for production (requirements in SYSTEM_ARCHITECTURE §14)? | M0 | open |
-| T-2 | Supabase Auth hosted vs alternative OIDC provider (e.g. Auth0, Clerk, WorkOS, Cognito, self-hosted). Does Supabase hosting meet our data residency and sub-processor needs? | M0 | open |
-| T-3 | Staff sign-in: password+MFA, Google OIDC for staff, SAML for districts, or all? | M1 | open |
+| T-2 | Supabase is selected for Auth (ADR-0013/0016). Remaining: which Supabase region and plan; does it meet our data-residency and sub-processor needs for staff identity data; what DPA terms apply? | M1 | open |
+| T-3 | M1 uses email + password + TOTP (ADR-0016). Remaining: when and whether to add Google OIDC and/or SAML for district staff. | M5 | open |
 | T-4 | Postgres-backed job queue library choice (evaluate e.g. pg-boss, graphile-worker) vs. Redis-based queue from the start. | M1 | open |
-| T-5 | Connection pooler choice compatible with `SET LOCAL` tenant context in transaction mode. | M1 | open |
-| T-6 | Hosting model for Next.js (container vs serverless platform) given long-running worker needs and private DB networking. | M1 | open |
 | T-7 | Device gateway transport for Go agent: long-poll, WebSocket, or gRPC streaming? | M7 | open |
 | T-8 | Device CA: managed private CA service vs self-operated? | M7 | open |
 | T-9 | Which Linux distribution is the base for the SchoolOS educational OS and the M7 development target? | M7 | open |
 | T-10 | Audit log external anchoring mechanism (object-lock storage, transparency log)? | M5 | open |
-| T-11 | Does PostgreSQL run in our own cloud account, or co-hosted with Supabase? If co-hosted, how is Supabase's auto-generated data API disabled and verified? (Review D-2, S-14) | M1 | open |
-| T-12 | Does Supabase Auth provide TOTP MFA with a server-verifiable assurance level, reauthentication for step-up, and configurable idle/absolute session limits on our plan? (Review A-1 to A-3) | M1 | open |
-| T-13 | Which migration tool and DB access library? (Review D-4) | M1 | open |
-| T-14 | Which PostgreSQL major version does the chosen managed provider support, and is native `uuidv7()` available? (Review D-3) | M1 | open |
-| T-15 | How should audit logs reconcile immutability with retention and data-subject deletion? (Review C-1, C-2, D-5) | M1 | open |
+| T-12 | Can Supabase Auth password sign-in, TOTP enroll/challenge/verify, refresh, and session termination all be performed **server-side** without exposing tokens to the browser? Docs confirm the `aal`/`amr` claims and the JWKS (ADR-0016); the server-side flows need the ADR-0016 spike. Supabase session limits no longer matter because SchoolOS enforces sessions. | M1 (step 0b) | investigating |
+| T-13 | dbmate + Kysely + node-postgres proposed (ADR-0014). Pending the compatibility spike. | M1 (step 0a) | investigating |
+| T-16 | IaC tool for AWS: Terraform/OpenTofu or AWS CDK (TypeScript)? Must support separate accounts per environment, reviewed plans, and encrypted remote state with no plaintext secrets. | M1 (before step 10) | open |
+| T-17 | Egress design for private ECS tasks (Supabase, Google APIs, AWS APIs): NAT gateway count per environment vs VPC endpoints, and the cost of each. | M1 (before step 10) | open |
+| T-18 | Email delivery for invitations, MFA-reset notices, and security notifications: Amazon SES, Supabase Auth email, or another provider? Includes sender domain authentication (SPF/DKIM/DMARC). | M1 (before step 7) | open |
+| T-19 | Which RFC 9562-conformant UUIDv7 library (ADR-0013)? | M1 (step 2) | open |
+| T-20 | Container build: Node.js 26 base image variant, Next.js output mode for containers, image signing/provenance. | M1 (step 1/10) | open |
 
 ## Business
 
@@ -81,4 +80,11 @@ Status: `open`, `investigating`, `resolved`, `wont_resolve`.
 
 ## Resolved
 
-_None yet._
+| ID | Question | Answer | Date | Source |
+| --- | --- | --- | --- | --- |
+| T-1 | Which cloud provider for production? | AWS, primary region `us-east-2` | 2026-11-02 | [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) |
+| T-5 | Connection pooler compatible with `SET LOCAL`? | Standard `pg` Pool with direct private RDS connectivity; no RDS Proxy until needed; any future pooler must pass `SET LOCAL` and cross-tenant concurrency tests first | 2026-11-02 | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) |
+| T-6 | Hosting model for Next.js and worker? | Containerized web service and independent worker on ECS Fargate behind an ALB | 2026-11-02 | [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) |
+| T-11 | PostgreSQL in our account or co-hosted with Supabase? | AWS RDS in our account; Supabase for Auth only; Supabase Data API not used and verified to expose nothing | 2026-11-02 | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) |
+| T-14 | PostgreSQL version and UUIDv7 approach? | PostgreSQL 18 (18.6 in RDS and Docker as of 2026-11-02); UUIDv7 generated in the application | 2026-11-02 | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md); AWS RDS release calendar; Docker Hub |
+| T-15 | Audit immutability vs retention and deletion? | Opaque-ID hashed core, redactable details, KMS-signed checkpoints, prefix-only purge, separate platform chain | 2026-11-02 | [ADR-0017](DECISIONS/0017-audit-log-design.md) |

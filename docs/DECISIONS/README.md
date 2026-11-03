@@ -21,3 +21,11 @@ Rules:
 | [0009](0009-background-jobs.md) | PostgreSQL-backed job queue first; Redis when needed | Proposed |
 | [0010](0010-no-simulated-enforcement.md) | Never represent simulated enforcement as real | Accepted |
 | [0011](0011-production-infrastructure-separation.md) | Production infrastructure separate from personal/home infrastructure | Accepted |
+| [0012](0012-tooling.md) | Tooling: pnpm, Node.js LTS, strict TypeScript, single Next.js app, Tailwind CSS and shadcn/ui | Accepted |
+| [0013](0013-database-hosting-postgres-version-uuid-pooling.md) | AWS RDS PostgreSQL 18, Supabase for Auth only, app-generated UUIDv7, standard pg pooling | Accepted |
+| [0014](0014-database-tooling.md) | Database tooling: dbmate, Kysely, node-postgres | Proposed (pending spike) |
+| [0015](0015-organization-resolution.md) | Organization explicit in URL paths; per-request membership and permission checks | Accepted |
+| [0016](0016-session-model.md) | Session model: Supabase identity + TOTP, SchoolOS-authoritative server-side sessions | Proposed (pending spike; fixed requirements binding) |
+| [0017](0017-audit-log-design.md) | Audit log: hash-chained core, redactable details, signed checkpoints, prefix purge, platform chain | Accepted |
+| [0018](0018-aws-infrastructure-and-deployment.md) | AWS infrastructure and deployment with cost controls | Accepted (IaC tool and egress open) |
+| [0019](0019-support-access-grants.md) | Support access via temporary grants evaluated by `authorize()` | Accepted (implementation M5) |

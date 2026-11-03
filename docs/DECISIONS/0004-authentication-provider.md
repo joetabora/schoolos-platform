@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-11-02
-- **Related:** SYSTEM_ARCHITECTURE §7, OPEN_QUESTIONS T-2, T-3
+- **Related:** SYSTEM_ARCHITECTURE §7, OPEN_QUESTIONS T-2, T-3. Refined by [ADR-0013](0013-database-hosting-postgres-version-uuid-pooling.md) (Supabase for Auth only; no Supabase database or Data API) and [ADR-0016](0016-session-model.md) (SchoolOS-authoritative sessions). Stays Proposed until the ADR-0016 spike passes.
 
 ## Context
 
@@ -10,7 +10,7 @@ We need staff authentication with MFA quickly, without building password storage
 
 ## Decision
 
-- Use Supabase Auth initially for staff identity (sessions, MFA, optional OIDC).
+- Use Supabase Auth initially for staff identity (authentication and TOTP MFA; optional OIDC later). Session lifetime, inactivity, step-up, and revocation are enforced by SchoolOS (ADR-0016).
 - Access it only through an internal `AuthProvider` interface (`verifySession`, `getUser`, `revokeSessions`).
 - Store users, memberships, roles, and permissions in SchoolOS tables. Do not store authorization data in IdP metadata.
 - Do not use Supabase's client-side data access APIs; all data access goes through our server and our authorization layer.

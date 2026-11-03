@@ -1,6 +1,6 @@
 # M1 Implementation Plan: Platform Skeleton
 
-- **Status:** Proposed. Ratify the decisions in §2 before the step that depends on each.
+- **Status:** Ready to start. Decisions D-1 to D-8 were ratified on 2026-11-02 (§2). Two decisions remain Proposed until their compatibility spikes pass: database tooling (ADR-0014) and the Supabase session flow (ADR-0016). Those spikes are M1 step 0.
 - **Milestone:** M1 ([`ROADMAP.md`](ROADMAP.md#m1-platform-skeleton))
 - **Inputs:** [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md), [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md), [`DATA_MODEL.md`](DATA_MODEL.md), [`SECURITY_MODEL.md`](SECURITY_MODEL.md)
 - **Google dependency:** **None.** M1 contains no provider code, no device tables, and no Google credentials. It can be completed in full before the M0 Google spike finishes.
@@ -18,7 +18,7 @@ Deliver a secure, tested, multi-tenant foundation that every later milestone bui
 6. Row-level security on every tenant table
 7. Hash-chained audit logging with verification
 8. Automated tenant-isolation test harness
-9. `local`, `dev`, and `staging` environments
+9. `local` and CI environments (Docker PostgreSQL), plus `dev` and `staging` on AWS (`us-east-2`, ECS Fargate, ALB, RDS, Secrets Manager, KMS), defined in IaC
 
 ### Out of scope (do not build in M1)
 - Integrations, devices, policies, commands, security events (M2–M5)
@@ -29,19 +29,21 @@ Deliver a secure, tested, multi-tenant foundation that every later milestone bui
 - RLS-level school scoping (service layer only in M1; review C-9)
 - Redis (ADR-0009)
 
-## 2. Decisions to ratify (as ADRs) before dependent steps
+## 2. Ratified decisions
 
-Details and rationale are in the readiness review, §7.
+Background is in the readiness review, §7. Decisions were ratified 2026-11-02.
 
-| Decision | Recommendation | ADR to write | Blocks step |
-| --- | --- | --- | --- |
-| D-1 Tooling | pnpm, active Node LTS, single package | ADR-0012 | 1 |
-| D-2 Database hosting vs Supabase | Our own managed Postgres; Supabase for Auth only | ADR-0013 | 2 |
-| D-3 Postgres version and UUIDs | Match managed provider; app-generated UUIDv7 if no native function | in ADR-0013 | 2 |
-| D-4 Migrations and DB access | Plain SQL migrations + typed thin query layer, after a time-boxed spike | ADR-0014 | 2 |
-| D-6 Active-org resolution | Org in URL path; membership checked per request | ADR-0015 | 4 |
-| D-8 Session model | Depends on Supabase verification (T-12) | ADR-0016 | 3 |
-| D-5 Audit design | Hashed core row with opaque IDs, redactable details, prefix purge with checkpoints | ADR-0017 | 6 |
+| Decision | Outcome | ADR | Status | Blocks step |
+| --- | --- | --- | --- | --- |
+| D-1 Tooling | pnpm; Node.js 26 LTS pinned; strict TypeScript; single Next.js app; Tailwind CSS + shadcn/ui | [ADR-0012](DECISIONS/0012-tooling.md) | Accepted | 1 |
+| D-2 Hosting | AWS `us-east-2`; RDS PostgreSQL; Supabase for Auth only; ECS Fargate web + worker behind ALB; Secrets Manager + KMS | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md), [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) | Accepted (IaC tool and egress open: T-16, T-17) | 2, 10 |
+| D-3 Postgres and UUIDs | PostgreSQL 18 (18.6 pinned in RDS, Docker, CI); UUIDv7 generated in the app | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted | 2 |
+| Pooling | Standard `pg` Pool, direct private RDS connectivity; no RDS Proxy until needed | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted | 2 |
+| D-4 DB tooling | dbmate + Kysely + node-postgres; direct SQL for RLS/policies/triggers/functions/locks/audit | [ADR-0014](DECISIONS/0014-database-tooling.md) | **Proposed: spike required** | 2 |
+| D-5 Audit | Opaque-ID hashed core, redactable details, KMS-signed checkpoints, prefix purge, platform chain | [ADR-0017](DECISIONS/0017-audit-log-design.md) | Accepted | 6 |
+| D-6 Org resolution | Org in URL path; membership + permissions verified per request | [ADR-0015](DECISIONS/0015-organization-resolution.md) | Accepted | 4 |
+| D-7 Support access | Temporary grants via `authorize()`; no support membership | [ADR-0019](DECISIONS/0019-support-access-grants.md) | Accepted (M5) | — |
+| D-8 Sessions | Supabase identity + TOTP; SchoolOS-authoritative sessions (30 min idle, 12 h absolute), fresh MFA step-up, server-side JWT verification, no browser token storage | [ADR-0016](DECISIONS/0016-session-model.md) | **Proposed: spike required** (fixed requirements binding now) | 3 |
 
 ## 3. Workstreams
 
@@ -76,9 +78,12 @@ tests/
   unit/  integration/  isolation/  e2e/
 ```
 
-**Tooling requirements:**
-- TypeScript `strict`, no `any` in `src/platform/**` without a justification comment.
-- ESLint import-boundary rules: `src/modules/**` cannot import `src/providers/**` (ADR-0005); only `src/platform/auth/**` may import the Supabase SDK (ADR-0004); only `src/platform/db/**` may open DB connections.
+**Tooling requirements (ADR-0012):**
+- pnpm pinned via `packageManager`; Node.js 26 LTS pinned in `.nvmrc`/`.node-version`, `engines`, the container base image, and CI.
+- Single Next.js App Router application with Tailwind CSS and shadcn/ui; no monorepo tooling.
+- TypeScript `strict` (plus `noUncheckedIndexedAccess`, `noImplicitOverride`), no `any` in `src/platform/**` without a justification comment.
+- ESLint import-boundary rules: `src/modules/**` cannot import `src/providers/**` (ADR-0005); only `src/platform/auth/**` may import the Supabase SDK (ADR-0004); only `src/platform/db/**` may import `pg` or construct Kysely instances (ADR-0014).
+- No Supabase client code runs in the browser for authentication state (ADR-0016).
 - Formatter, type check, lint, and tests run in CI on every PR.
 - Dependency vulnerability scan and secret scan in CI.
 - `.env.example` documents every variable; real `.env*` files are git-ignored (already configured).
@@ -100,13 +105,17 @@ The wrapper verifies the session, resolves `orgId` from the path, loads the memb
 
 ### 3.2 Authentication
 
-- `AuthProvider` interface (ADR-0004): `verifySession(req)`, `getUser(subject)`, `revokeSessions(subject)`, `startMfaEnrollment`, `verifyMfa`, `reauthenticate` (shapes finalized after T-12).
-- **Supabase adapter** is the only production implementation.
+Implements [ADR-0016](DECISIONS/0016-session-model.md). Its fixed requirements are binding; the Supabase flow details are confirmed by the step 0 spike.
+
+- `AuthProvider` interface (ADR-0004): `signInWithPassword`, `startMfaEnrollment`, `challengeMfa`, `verifyMfa`, `refresh`, `endProviderSession`, `getUser(subject)` (shapes finalized after the spike).
+- **Supabase adapter** is the only production implementation. All calls to Supabase Auth are made **server-side**; the browser never talks to Supabase Auth and never holds Supabase tokens.
 - **Fake adapter** exists only for unit/integration tests and local development; refused at startup outside those environments (TST-8).
+- **JWT verification** for every Supabase token received: JWKS signature with `ES256`/`RS256` allow-list (`HS256` and `none` rejected), known `kid`, exact `iss`, `aud` contains `authenticated`, `exp`/`iat`/`nbf` with ≤ 60 s skew, expected `sub`. `role`, `app_metadata`, and `user_metadata` are never used for authorization.
 - **User provisioning:** on first successful sign-in, create a `users` row keyed by `auth_subject` (lower-cased email stored, refreshed each login; review DB-7). A user with no memberships sees only the "no organizations" page.
-- **MFA:** TOTP. Required before any org-scoped request for roles flagged `mfa_required` (all M1 admin roles). Enforced server-side by the route wrapper, not only in the UI.
-- **Sessions:** HTTP-only, `Secure`, `SameSite=Lax`. Idle 30 min, absolute 12 h. If the IdP can't enforce both (A-3), keep a SchoolOS session record (`user_sessions`) with `last_seen_at`, `authenticated_at`, `step_up_at`, `revoked_at` (D-8).
-- **Step-up:** required (≤ 5 min) for role changes, member removal, and audit export in M1.
+- **MFA:** TOTP. Required before any org-scoped request for privileged roles (`org_owner`, `org_admin`, `school_admin`, `technician`, `security_analyst`; `auditor` configurable). Enforced server-side by the route wrapper, not only in the UI. Unenrolling a factor revokes all of the user's sessions.
+- **Sessions (SchoolOS-authoritative):** opaque `__Host-schoolos_session` cookie (`HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`); only its hash is stored in `user_sessions`. Idle timeout 30 min and absolute lifetime 12 h are enforced by SchoolOS regardless of Supabase plan settings; org settings may only be stricter. Cookie rotated on sign-in, MFA verification, and step-up. Supabase tokens are stored server-side only, KMS envelope-encrypted, in `user_session_credentials`.
+- **Step-up (fresh MFA):** a TOTP verification within the last 5 minutes for role or scope changes, member removal, MFA reset of another user, and audit export in M1.
+- **Revocation:** sign-out, forced sign-out, MFA/password reset, user suspension. Takes effect on the next request.
 - **Account recovery / MFA reset:** requires an org owner or admin action plus an audit entry and an email notification to the user; never self-service by email alone (S-5).
 - **Rate limiting** on sign-in, MFA verification, invitation acceptance (S-8).
 
@@ -159,7 +168,8 @@ From [`DATA_MODEL.md`](DATA_MODEL.md) §3.1, plus gaps from review DB-5:
 | `organization_settings` | yes | session timeouts within platform bounds, MFA policy |
 | `schools` | yes | |
 | `users` | global | `auth_subject` unique, `email` lower-cased unique |
-| `user_sessions` | global (per user) | only if D-8 requires it |
+| `user_sessions` | global (per user) | **required** (ADR-0016): token hash, idle/absolute expiry, `mfa_verified_at`, `step_up_at`, revocation |
+| `user_session_credentials` | global (per session) | Supabase tokens, KMS envelope-encrypted; `app_auth` role only |
 | `memberships` | yes | simple FK to `roles` + same-org-or-built-in check (DB-1) |
 | `membership_school_scopes` | yes | composite tenant FKs |
 | `permissions` | global, read-only | seeded |
@@ -173,9 +183,9 @@ From [`DATA_MODEL.md`](DATA_MODEL.md) §3.1, plus gaps from review DB-5:
 | `platform_audit_logs` | platform only | not visible to `app_user` tenant queries |
 | job queue tables | n/a | created by the chosen queue library (ADR-0009, T-4) |
 
-Conventions: UUIDv7 IDs (D-3), `created_at`/`updated_at` with trigger (DB-6), `text` + `check` for statuses (DB-8), `ON DELETE RESTRICT` by default (DB-10), every tenant index leads with `organization_id` (DB-2).
+Conventions: PostgreSQL 18 (pinned minor, identical in Docker, CI, and RDS), UUIDv7 IDs generated in the application (ADR-0013), `created_at`/`updated_at` with trigger (DB-6), `text` + `check` for statuses (DB-8), `ON DELETE RESTRICT` by default (DB-10), every tenant index leads with `organization_id` (DB-2). Migrations are plain SQL run by dbmate; queries use Kysely bound to the tenant transaction's `pg` client (ADR-0014, pending spike).
 
-**Database roles:** `schoolos_owner` (migrations), `app_user` (runtime, no `BYPASSRLS`, not owner), `audit_maintainer` (retention purge only; not used in M1 runtime but created and tested), `app_worker` if the worker needs narrower grants than `app_user`.
+**Database roles:** `schoolos_owner` (migrations), `app_user` (runtime, no `BYPASSRLS`, not owner), `app_auth` (auth module: session tables), `audit_maintainer` (retention purge only; not used in M1 runtime but created and tested), `app_worker` if the worker needs narrower grants than `app_user`.
 
 ### 3.6 Row-level security
 
@@ -262,7 +272,7 @@ Run against real PostgreSQL in Docker, same major version as production (TST-7).
 | **Route isolation** (TST-2) | For every registered route: Org A user calling with Org B's `orgId` or a resource ID from Org B gets `404`; no Org B data appears in any response body. A route missing from the harness fails CI. |
 | **Permission matrix** (TST-4) | Each role × permission × endpoint returns allowed or denied as the matrix specifies; code matrix equals seeded rows. |
 | **School scope** | `school_admin` scoped to School 1 can't read members scoped only to School 2. |
-| **Pool leakage** (TST-3) | Hundreds of interleaved concurrent transactions for two orgs on a shared pool never cross-read. Repeated against the chosen production pooler before staging sign-off (A-4). |
+| **Pool leakage** (TST-3) | Hundreds of interleaved concurrent transactions for two orgs on a shared pool never cross-read. Repeated against `pg` Pool → RDS in staging before sign-off, and against any future external pooler before it's accepted (ADR-0013). |
 | **Audit integrity** (TST-5) | `update`/`delete` as `app_user` fail; tampering with any hashed field is detected; purge + checkpoint still verifies. |
 | **Escalation** | Inviter can't grant higher permissions; last owner can't be removed; self-approval paths don't exist. |
 | **Auth gating** | MFA-required roles get `403` on org routes until MFA is verified; fake auth refused outside test/local (TST-8). |
@@ -275,14 +285,16 @@ Test data is synthetic only. Factories generate obviously fake names and emails 
 
 | Environment | Database | Auth | Purpose | Data |
 | --- | --- | --- | --- | --- |
-| `local` | Docker Compose Postgres (pinned major version) | Fake adapter or local Supabase stack (decided in step 3) | Development | Synthetic |
-| `test` (CI) | Ephemeral Docker Postgres per job | Fake adapter + Supabase adapter contract tests (against local stack) | Automated tests | Synthetic |
-| `dev` | Managed Postgres in the company cloud account | Supabase project `schoolos-dev` | Shared integration | Synthetic |
-| `staging` | Managed Postgres, production-like config (TLS, backups, private network) | Supabase project `schoolos-staging` | Pre-production | Synthetic |
+| `local` | Docker Compose `postgres:18.6` (same pin as RDS) | Fake adapter or local Supabase stack (decided by the ADR-0016 spike) | Development | Synthetic |
+| `test` (CI) | Ephemeral Docker `postgres:18.6` per job | Fake adapter + Supabase adapter contract tests (approach decided by the spike) | Automated tests | Synthetic |
+| `dev` | RDS PostgreSQL 18 in AWS `dev` account, `us-east-2`, isolated private subnets | Supabase project `schoolos-dev` | Shared integration | Synthetic |
+| `staging` | RDS PostgreSQL 18 in AWS `staging` account, production-like config (TLS required, PITR, KMS, deletion protection) | Supabase project `schoolos-staging` | Pre-production | Synthetic |
 
-- `dev` and `staging` are in company-owned accounts, separate from each other and from any developer's home server (ADR-0011). No customer data in either.
-- Infrastructure as code for `dev` and `staging` (tool chosen with T-1).
-- Secrets come from the cloud provider's secrets manager; nothing in the repo or CI logs.
+- `dev` and `staging` are in separate company-owned AWS accounts, separate from each other and from any developer's home server (ADR-0011, ADR-0018). No customer data in either.
+- Compute: ECS Fargate `web` service behind an ALB and an independent `worker` service, both in private subnets without public IPs (ADR-0018).
+- Infrastructure as code for `dev` and `staging` (tool: OPEN_QUESTIONS T-16; egress design: T-17).
+- Secrets from **AWS Secrets Manager**; keys in **AWS KMS**. Nothing in the repo, images, IaC state in plaintext, or CI logs. CI assumes deploy roles via GitHub Actions OIDC.
+- **Cost control (ADR-0018):** AWS Budgets with alerts and Cost Anomaly Detection in each account before anything is deployed; mandatory cost tags; dev services scaled to zero and dev RDS stopped when idle; staging run only during test windows; no RDS Proxy, Multi-AZ, WAF, or per-AZ NAT in dev.
 - CI/CD: PRs run type check, lint, unit, integration, isolation, E2E, secret scan, dependency scan, and the migration test (TST-6). Merges to `main` deploy to `dev` automatically. `staging` deploys need manual approval.
 - Migrations run in the pipeline as `schoolos_owner`. The app never runs migrations at startup.
 - Observability baseline: structured logs with `correlation_id` and `organization_id`, redaction (S-15), error tracking configured to exclude request bodies.
@@ -293,33 +305,36 @@ Each step is one or a few reviewable PRs, with an exit check. Don't start a step
 
 | Step | Work | Blocking decisions | Exit check |
 | --- | --- | --- | --- |
-| **0** | Write ADR-0012 to ADR-0017 (Proposed), time-boxed spikes for D-4 (migration/query tool) and T-12 (Supabase capabilities, local stack) | — | ADRs reviewed; spike findings recorded |
-| **1** | Foundation: Next.js + TS strict, lint with import boundaries, formatter, test runner, Docker Compose Postgres, config validation, logger with redaction, CI pipeline (type, lint, unit, secret scan, dependency scan) | D-1 | CI green on an empty app; `/api/v1/health` returns 200 |
-| **2** | Database baseline: DB roles, `app` schema and context functions, migration tooling, `withTenant`/`withUser`/`withSystem`, the RLS coverage test (TST-1), no-context test, migration test (TST-6) | D-2, D-3, D-4 | Coverage test fails on a deliberately unprotected table and passes once RLS is added |
-| **3** | Identity: `users`, `AuthProvider`, fake adapter + startup guard (TST-8), Supabase adapter, sign-in, MFA, session model, step-up, rate limiting, security headers, CSRF/origin check | D-8 | Sign-in + MFA works locally; auth gating tests pass |
+| **0a** | **ADR-0014 compatibility spike** (2 days, throwaway branch, Docker `postgres:18.6`): dbmate + Kysely + `pg` against the seven checks in ADR-0014 | — | Results recorded in ADR-0014; status Accepted or superseded |
+| **0b** | **ADR-0016 compatibility spike** (2 days, non-production Supabase project): server-side sign-in, TOTP, JWKS verification, refresh, revocation, Data API disabled, local/CI auth approach | Supabase dev project exists | Results recorded in ADR-0016; status Accepted or amended |
+| **1** | Foundation: Next.js + TS strict + Tailwind + shadcn/ui, pinned Node.js 26 and pnpm, lint with import boundaries, formatter, test runner, Docker Compose `postgres:18.6`, config validation, logger with redaction, CI pipeline (type, lint, unit, secret scan, dependency scan) | ADR-0012 (Accepted) | CI green on an empty app; `/api/v1/health` returns 200 |
+| **2** | Database baseline: DB roles, `app` schema and context functions, dbmate migrations, `pg` Pool + `withTenant`/`withUser`/`withSystem` + Kysely binding, app-side UUIDv7, the RLS coverage test (TST-1), no-context test, migration test (TST-6) | ADR-0013 (Accepted), ADR-0014 (after 0a) | Coverage test fails on a deliberately unprotected table and passes once RLS is added |
+| **3** | Identity: `users`, `user_sessions`, `user_session_credentials`, `AuthProvider`, fake adapter + startup guard (TST-8), Supabase adapter, server-side sign-in, JWT verification, TOTP MFA, SchoolOS session enforcement (idle/absolute/revocation), fresh-MFA step-up, rate limiting, security headers, CSRF/origin check | ADR-0016 (after 0b) | Sign-in + MFA works locally; session, JWT-rejection, and no-browser-token tests pass |
 | **4** | Tenancy core: `organizations`, `organization_settings`, `schools`, operator CLI, route wrapper with org resolution, `/me`, `/me/organizations`, org and school endpoints, route-isolation harness (TST-2) | D-6 | Table + route isolation suites pass for these tables and routes |
 | **5** | RBAC: `permissions`, `roles`, `role_permissions` seeds, `memberships`, `membership_school_scopes`, `authorize()`, permission matrix tests (TST-4), school-scope tests | — | Matrix tests pass; route harness covers every route |
 | **6** | Audit: `audit_logs`, `audit_log_details`, `audit_checkpoints`, `platform_audit_logs`, `writeAudit`, wiring into the route wrapper and steps 3–5 actions, verification job in the worker, audit read/export endpoints, integrity tests (TST-5) | D-5 | Every M1 action produces an audit row; tamper test detects changes; chain verifies after purge test |
 | **7** | Members and invitations: invitation lifecycle, accept flow, role/scope change, suspend/remove, last-owner and escalation protections, API idempotency cache | — | Escalation and invitation tests pass |
 | **8** | Minimal UI and E2E: sign-in, MFA, org picker, schools, members/invitations, audit viewer, demo banner; E2E smoke (TST-10); OpenAPI generation | — | E2E green in CI |
 | **9** | Hardening: pool-leak concurrency test (TST-3), audit throughput check (A-6, target 50 audited writes/s per org), log redaction test, header test, threat-model review of the M1 surface | — | All suites green; threat-model review recorded |
-| **10** | Environments: IaC for `dev` and `staging`, secrets manager, pipeline deploys, TST-3 against the real pooler, staging smoke | T-1, T-6 | Staging deployed by pipeline only; isolation suite passes against staging DB |
+| **10** | AWS environments: accounts, budgets and anomaly detection first, then IaC for `dev` and `staging` (VPC, ALB, ECS Fargate web + worker, RDS PostgreSQL 18, Secrets Manager, KMS keys including the audit signing key, ECR, CloudWatch), GitHub OIDC deploy roles, migration task, pipeline deploys, TST-3 against `pg` Pool → RDS, staging smoke | ADR-0018 (Accepted); T-16 IaC tool; T-17 egress | Staging deployed by pipeline only; budgets active; isolation suite passes against staging DB; no public IPs on tasks or RDS |
 
-Steps 1–9 can be completed entirely on `local` + CI. Only step 10 depends on the cloud provider decision.
+Steps 0a and 1–2 need only local Docker. Step 0b needs a non-production Supabase project. Steps 3–9 run on `local` + CI. Only step 10 creates AWS resources, and it requires explicit approval before anything is provisioned.
 
 ## 5. M1 definition of done
 
 All of the following must be met (they extend the M1 criteria in ROADMAP):
 
-- [ ] ADR-0012 to ADR-0017 accepted.
+- [ ] ADR-0014 and ADR-0016 moved to Accepted after their spikes (ADR-0012, 0013, 0015, 0017, 0018, 0019 already Accepted). T-16 and T-17 decided.
 - [ ] Every tenant table has forced RLS (TST-1 green).
 - [ ] Cross-tenant table and route suites pass for every table and route (TST-2 green).
 - [ ] No-context queries return zero rows.
 - [ ] Audit `update`/`delete` blocked for `app_user`; chain verification and tamper detection pass.
 - [ ] Permission matrix tests pass; code and seed matrices match.
 - [ ] MFA enforced server-side for admin roles; fake auth can't run outside test/local.
-- [ ] Pool-leak test passes against the production pooler.
+- [ ] Pool-leak test passes against `pg` Pool → RDS in staging.
+- [ ] Session tests pass: idle and absolute expiry, revocation, MFA gating, step-up window, JWT rejection cases, no tokens in browser storage.
 - [ ] Staging deployed via pipeline, not manually; no secrets in repo or logs.
+- [ ] AWS Budgets, alerts, and Cost Anomaly Detection active in every account; dev resources can be scaled to zero or destroyed from IaC.
 - [ ] Threat model reviewed for the M1 surface; readiness review items marked "M1" closed or re-scoped with a documented reason.
 - [ ] Coverage ≥ 80% for `src/platform/authz`, `src/platform/db`, `src/platform/audit` (NFR-11).
 - [ ] Docs updated where implementation diverged from design (with ADRs where required).
@@ -328,9 +343,11 @@ All of the following must be met (they extend the M1 criteria in ROADMAP):
 
 | Risk | Mitigation |
 | --- | --- |
-| Supabase lacks a capability we assumed (MFA level, step-up, timeouts) | Step 0 spike; fallback to a SchoolOS session layer (D-8) |
-| Query library makes it easy to bypass `withTenant` | Lint rule: no DB client imports outside `src/platform/db`; code review checklist |
+| Supabase server-side flows don't work as documented (e.g. server-side MFA verify) | Step 0b spike; SchoolOS sessions are authoritative regardless; amend ADR-0016 if flows differ |
+| dbmate or Kysely fails a compatibility check | Step 0a spike; supersede ADR-0014 before step 2 |
+| Query library makes it easy to bypass `withTenant` | Lint rule: no `pg`/Kysely imports outside `src/platform/db`; code review checklist |
 | RLS performance surprises | `STABLE` context functions, leading `organization_id` indexes, `EXPLAIN` checks in step 9 |
 | Audit lock contention | Throughput check in step 9; revisit design if below target |
-| Cloud provider decision slips | Steps 1–9 don't depend on it |
+| AWS baseline costs (ALB, NAT, RDS) higher than expected | Budgets and alerts before deployment; dev scaled to zero; egress design (T-17) evaluated for cost |
+| IaC tool undecided at step 10 | Decide T-16 during steps 1–9; it doesn't block earlier steps |
 | Scope creep into M2 (devices, Google) | Out-of-scope list in §1; reviewers reject provider code in M1 PRs |

@@ -71,10 +71,20 @@ Method: STRIDE per component, re-reviewed at each milestone that adds an externa
 
 ## 5. Authentication and authorization (staff)
 
-- IdP: Supabase Auth initially (see ADR-0004), with SchoolOS owning users/memberships/roles.
-- MFA: required for `org_owner`, `org_admin`, `school_admin`, `technician`, `security_analyst`; optional (configurable to required) for `auditor`.
-- Step-up re-authentication (≤ 5 minutes since last auth) for: approving destructive commands, starting remote access, managing integrations, changing roles, exporting audit logs or data.
-- Sessions: HTTP-only, `Secure`, `SameSite=Lax` cookies; idle timeout 30 min, absolute 12 h (configurable per org within bounds); CSRF protection on mutating requests.
+- IdP: Supabase Auth for identity authentication and TOTP MFA only (ADR-0004, ADR-0013). SchoolOS owns users, memberships, roles, permissions, and sessions.
+- MFA: **TOTP** required for `org_owner`, `org_admin`, `school_admin`, `technician`, `security_analyst`; optional (configurable to required) for `auditor`. Enforced server-side before any org-scoped request.
+- Step-up: **fresh TOTP verification within the last 5 minutes** for: approving destructive commands, starting remote access, managing integrations, changing roles or school scopes, removing members, resetting another user's MFA, exporting audit logs or data.
+- Sessions ([ADR-0016](DECISIONS/0016-session-model.md)):
+  - The browser holds only an opaque `__Host-schoolos_session` cookie (256-bit random, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, no `Domain`). The server stores only its hash.
+  - The SchoolOS `user_sessions` record is authoritative and enforces **idle timeout 30 min** and **absolute lifetime 12 h** independently of Supabase plan settings. Organizations may configure stricter values only.
+  - Revocation (sign-out, admin forced sign-out, password/MFA reset, MFA factor unenrollment, user suspension, incident response) takes effect on the next request.
+  - The session cookie is rotated on sign-in, MFA verification, and step-up.
+  - CSRF protection on mutating requests: `SameSite=Lax` plus `Origin`/`Host` verification plus a double-submit token for form posts.
+- Token handling:
+  - **No authentication tokens in browser storage** (`localStorage`, `sessionStorage`, IndexedDB) or in JavaScript-readable cookies. The browser doesn't call Supabase Auth directly.
+  - Supabase access and refresh tokens are held **server-side only**, envelope-encrypted with KMS, readable only by the auth module's database role, and deleted on revocation or expiry.
+  - Every Supabase JWT received is verified server-side: signature against the project JWKS with an asymmetric algorithm allow-list (`ES256`, `RS256`; `HS256` and `none` rejected), known `kid`, exact `iss`, `aud` containing `authenticated`, `exp`/`iat`/`nbf` with ≤ 60 s skew, expected `sub`. `aal` and `amr` are read only from verified tokens.
+  - Token claims `role`, `app_metadata`, and `user_metadata` are **never** used for authorization. Client-supplied role claims are never trusted.
 - Authorization: permission-based RBAC with school scopes, checked server-side via a single `authorize()` path, plus RLS for tenant isolation. See SYSTEM_ARCHITECTURE §8.
 - API tokens (post-MVP): scoped, expiring, hashed at rest, tied to a membership, auditable.
 
@@ -115,16 +125,21 @@ Every command delivered to a SchoolOS client is a signed envelope:
 ## 7. Secrets management
 
 - **No secrets in the repository, CI logs, client bundles, or database plaintext.** Secret scanning runs on every PR and push.
-- Runtime secrets (DB credentials, IdP keys, KMS access) come from a managed secrets store, injected at runtime.
+- Runtime secrets (DB credentials, Supabase server keys, other service credentials) come from **AWS Secrets Manager**, injected into ECS tasks at runtime. They're never baked into container images, committed `.env` files, or Terraform/IaC state in plaintext.
+- Encryption keys are **AWS KMS** customer-managed keys per environment, with separate keys for RDS storage, Secrets Manager, application envelope encryption, and the asymmetric audit-checkpoint signing key ([ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md)). Key policies grant `Decrypt`/`Sign` only to the task roles that need them.
+- Cloud access: IAM Identity Center with MFA for humans; no IAM users with long-lived access keys; CI uses GitHub Actions OIDC to assume per-environment roles; root users protected with MFA and unused day to day.
+- Supabase session credentials held for MFA and step-up flows are envelope-encrypted (DEK per record, KEK in KMS) and stored only server-side ([ADR-0016](DECISIONS/0016-session-model.md)).
 - **Per-tenant provider credentials:** envelope encryption — a data encryption key (DEK) per credential, wrapped by a KMS key encryption key (KEK). Decryption only in the worker, only at use time, never cached beyond the job.
 - Rotation: KEK rotation annually or on suspicion; OAuth credentials revocable per tenant; procedure documented and tested in staging.
 - Developers have no access to production secrets by default. Break-glass access requires two-person approval and is logged.
+- Cost-related changes (scaling down, stopping dev resources) must never disable security controls such as CloudTrail, encryption, backups on staging/prod, or security monitoring.
 - Local development uses separate, non-production credentials and a separate Google test tenant.
 
 ## 8. Encryption
 
-- **In transit:** TLS 1.2+ (1.3 preferred) everywhere, HSTS on the web app; internal traffic to the database over TLS; mTLS for agents.
-- **At rest:** managed PostgreSQL with storage encryption; backups encrypted; object storage encrypted with KMS keys.
+- **In transit:** TLS 1.2+ (1.3 preferred) everywhere, HSTS on the web app; TLS terminated at the ALB with an ACM certificate; database connections require TLS (`rds.force_ssl`) and verify the RDS CA; mTLS for agents.
+- **At rest:** RDS PostgreSQL storage, snapshots, and automated backups encrypted with a customer-managed KMS key; object storage encrypted with KMS keys.
+- **Network isolation:** RDS in isolated private subnets with no public accessibility; ECS tasks in private subnets without public IPs; security groups allow only ALB → web and tasks → RDS.
 - **Application-level encryption** for provider credentials (envelope encryption) and any field designated highly sensitive.
 - Password hashing is delegated to the IdP; SchoolOS never stores staff passwords.
 
@@ -134,6 +149,7 @@ Every command delivered to a SchoolOS client is a signed envelope:
 - Each record includes actor, actor type, organization, action, target, outcome, timestamp, IP/user agent (for user actors), correlation ID.
 - **Denied** authorization attempts on sensitive actions are logged too.
 - Tamper evidence via per-organization hash chain; daily verification job; export to write-once storage.
+- Design per [ADR-0017](DECISIONS/0017-audit-log-design.md): hashed core rows hold opaque IDs only; personal details are in separately redactable detail rows; KMS-signed checkpoints; prefix-only purge by a dedicated `audit_maintainer` role; separate platform audit chain. Successful actions are audited in the same transaction (fail closed). Denials and errors are audited in a separate transaction.
 - Audit logs are visible to the organization (org admins and auditors) including actions by SchoolOS support staff.
 - Platform operational logs (application logs) are separate from audit logs, redact PII, and have shorter retention.
 

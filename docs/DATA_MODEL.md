@@ -1,10 +1,13 @@
 # Data Model
 
 > **Status:** Proposed. This is a design for review, not a migration. Column lists are indicative; exact types, indexes, and constraints are finalized in M1–M3 migrations with tests.
+>
+> **2026-11-02 update:** Aligned with ratified decisions [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) (RDS PostgreSQL 18, app-generated UUIDv7, `pg` pool), [ADR-0016](DECISIONS/0016-session-model.md) (session tables), [ADR-0017](DECISIONS/0017-audit-log-design.md) (audit design), and [ADR-0019](DECISIONS/0019-support-access-grants.md) (support grants). Added tables identified in the readiness review (DB-5).
 
 ## 1. Conventions
 
-- **Primary keys:** `uuid` (UUIDv7 preferred for index locality), column `id`.
+- **Database:** AWS RDS for PostgreSQL 18; Docker `postgres` at the same pinned version for local and CI. Supabase hosts no SchoolOS tables.
+- **Primary keys:** `uuid`, column `id`, **UUIDv7 generated in the application** (RFC 9562). The schema doesn't rely on a native PostgreSQL UUIDv7 function.
 - **Tenant key:** every tenant-scoped table has `organization_id uuid not null references organizations(id)`.
 - **Composite foreign keys for tenant safety:** child tables reference parents with `(organization_id, parent_id)` → parent's `unique (organization_id, id)`. This makes cross-tenant references impossible at the schema level, not just by convention.
 - **Timestamps:** `created_at timestamptz not null default now()`, `updated_at timestamptz` where mutable. All times UTC.
@@ -20,6 +23,11 @@ erDiagram
   organizations ||--o{ schools : has
   organizations ||--o{ memberships : has
   users ||--o{ memberships : has
+  users ||--o{ user_sessions : has
+  organizations ||--|| organization_settings : has
+  organizations ||--o{ invitations : issues
+  audit_logs ||--|| audit_log_details : details
+  organizations ||--o{ audit_checkpoints : anchors
   memberships ||--o{ membership_school_scopes : "limited to"
   schools ||--o{ membership_school_scopes : ""
   roles ||--o{ role_permissions : grants
@@ -69,10 +77,25 @@ erDiagram
 `id`, `organization_id`, `name`, `external_ref` (e.g. state school ID, optional), `status`.
 
 **`users`** (global identity; one row per human)
-`id`, `auth_subject` (IdP subject, unique), `email`, `display_name`, `status`, `last_login_at`. Contains no role information.
+`id`, `auth_subject` (Supabase `sub`, unique; the identity key), `email` (stored lower-cased, unique, refreshed on sign-in), `display_name`, `status`, `last_login_at`. Contains no role information.
 
 **`memberships`** (user ↔ organization)
-`id`, `organization_id`, `user_id`, `role_id`, `status` (`invited`, `active`, `suspended`, `removed`), `invited_by`, `mfa_required boolean`. Unique `(organization_id, user_id)`.
+`id`, `organization_id`, `user_id`, `role_id`, `status` (`invited`, `active`, `suspended`, `removed`), `invited_by`, `mfa_required boolean`. Unique `(organization_id, user_id)`. `role_id` is a simple FK (built-in roles have `organization_id IS NULL`, so a composite tenant FK can't be used); a trigger enforces that the role is built-in or belongs to the same organization (review DB-1).
+
+**`organization_settings`** (one row per organization)
+`organization_id`, `session_idle_minutes` (≤ 30), `session_absolute_hours` (≤ 12), `mfa_required_for_auditor boolean`, `updated_by`, `updated_at`. Values may only be **stricter** than the platform defaults (ADR-0016).
+
+**`invitations`**
+`id`, `organization_id`, `email` (lower-cased), `role_id`, `school_ids uuid[]`, `token_hash` (SHA-256 of a 256-bit random token; plaintext never stored), `invited_by_membership_id`, `expires_at` (72 h), `accepted_at`, `accepted_by_user_id`, `revoked_at`. At most one open invitation per `(organization_id, email)`.
+
+**`user_sessions`** (global, per user; ADR-0016)
+`id`, `user_id`, `session_token_hash` (unique), `supabase_session_id`, `aal`, `authenticated_at`, `mfa_verified_at`, `step_up_at`, `created_at`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `revoked_reason`, `ip_hash`, `user_agent_summary`. Visible only to the auth module and to the owning user (own sessions list).
+
+**`user_session_credentials`** (global; ADR-0016)
+`session_id`, `ciphertext bytea`, `wrapped_dek bytea`, `kek_id`, `created_at`, `rotated_at`. Supabase access/refresh tokens, envelope-encrypted with KMS. Readable only by the auth module's DB role; deleted on revocation or expiry.
+
+**`api_idempotency_keys`**
+`organization_id`, `key`, `request_hash`, `response_status`, `response_body`, `created_at`, `expires_at` (24 h). Unique `(organization_id, key)`.
 
 **`membership_school_scopes`**
 `organization_id`, `membership_id`, `school_id`. If no rows exist the membership is organization-wide (only allowed for roles flagged `org_wide_allowed`).
@@ -83,7 +106,7 @@ erDiagram
 - Custom roles are post-MVP; the schema supports them.
 
 **`support_access_grants`**
-`id`, `organization_id`, `granted_to_user_id` (SchoolOS staff), `granted_by_membership_id`, `scope` (`read_only`, `read_write`), `reason`, `ticket_ref`, `starts_at`, `expires_at`, `revoked_at`. Checked by the authorization layer; every use is audited.
+`id`, `organization_id`, `granted_to_user_id` (SchoolOS staff), `granted_by_membership_id`, `scope` (`read_only`, `read_write`), `reason`, `ticket_ref`, `starts_at`, `expires_at`, `revoked_at`. Checked by the authorization layer; every use is audited. This is the **only** support access mechanism; there's no support membership or role ([ADR-0019](DECISIONS/0019-support-access-grants.md)). Implemented in M5.
 
 ### 3.2 Integrations
 
@@ -208,22 +231,34 @@ Static groups in MVP: `device_groups(id, organization_id, school_id NULL, name, 
 
 ### 3.7 Audit logs
 
-**`audit_logs`** (append-only, hash-chained per organization)
+Design per [ADR-0017](DECISIONS/0017-audit-log-design.md). The earlier draft put `actor_ip`, `actor_user_agent`, and `metadata` in the hashed row, which made retention purges and data-subject redaction impossible without breaking the chain (review C-1, C-2). Personal and human-readable data now live in a separate, redactable table.
+
+**`audit_logs`** (core record; append-only; hash-chained per organization)
 | Column | Notes |
 | --- | --- |
-| `id`, `organization_id NULL` | NULL only for platform-level events |
+| `id`, `organization_id` | `organization_id NOT NULL`; platform events use `platform_audit_logs` |
 | `seq bigint` | monotonically increasing per organization |
 | `occurred_at` | |
 | `actor_type` | `user`, `support`, `system`, `provider`, `device` |
-| `actor_id`, `actor_ip`, `actor_user_agent` | |
+| `actor_id` | opaque UUID only |
 | `action` | e.g. `command.requested`, `command.approved`, `policy.published`, `member.role_changed`, `integration.connected`, `audit.exported`, `support.access_used` |
-| `target_type`, `target_id` | |
+| `target_type`, `target_id` | opaque identifiers only |
 | `outcome` | `success`, `denied`, `error` |
-| `metadata jsonb` | no secrets, minimized PII |
 | `correlation_id` | |
-| `prev_hash`, `hash` | `hash = H(prev_hash ‖ canonical(row))` |
+| `details_id` | FK to `audit_log_details` |
+| `hash_version` | canonical serialization version |
+| `prev_hash`, `hash` | `hash = SHA-256(prev_hash ‖ canonical(core row))` |
 
-Rules: `app_user` has `INSERT` and `SELECT` only. Writes go through a single function to keep `seq`/hash computation consistent (serialized per organization via advisory lock). A scheduled job verifies the chain and alerts on mismatch. Periodic anchoring of the latest hash to external write-once storage is planned.
+**`audit_log_details`** (not hashed; redactable)
+`id`, `organization_id`, `actor_email`, `actor_ip`, `actor_user_agent`, `metadata jsonb` (no secrets, minimized PII), `redacted_at`, `redaction_reason`. Retention and data-subject deletion null these fields and set `redacted_at` without touching `audit_logs`.
+
+**`audit_checkpoints`**
+`id`, `organization_id`, `seq`, `hash`, `created_at`, `signature bytea`, `key_id` (AWS KMS asymmetric key). Written periodically and always before a purge.
+
+**`platform_audit_logs`** (separate chain for events with no organization)
+Same core columns minus `organization_id`, with its own `seq`/hash chain and its own details and checkpoints. Not accessible to tenant-facing roles.
+
+Rules: `app_user` has `INSERT` and `SELECT` only on audit tables. Writes go through a single function to keep `seq`/hash computation consistent (serialized per organization via `pg_advisory_xact_lock`). Successful actions are audited in the same transaction. Denials and errors are audited in a separate transaction. Purges delete only contiguous prefixes up to a checkpoint and run as `audit_maintainer`. A scheduled job verifies the chain from the latest applicable checkpoint and alerts on mismatch. Periodic anchoring of checkpoint hashes to external write-once storage is planned.
 
 ### 3.8 Subscriptions
 
@@ -267,7 +302,9 @@ create policy tenant_isolation on devices
   ```
 - If `app.current_org_id` is unset, `current_setting(..., true)` returns NULL and the policy matches **no rows** (fail closed).
 - The application DB role (`app_user`) is not the table owner and does not have `BYPASSRLS`.
-- Connection pooling must be transaction-mode compatible with `SET LOCAL`; session-level `SET` is forbidden (lint + review rule) to prevent context leaking between pooled connections.
+- Connection pooling uses a standard `pg` `Pool` with direct private connectivity to RDS (ADR-0013). Each tenant transaction runs on one checked-out connection; session-level `SET` is forbidden (lint + review rule) to prevent context leaking between pooled connections. Any future external pooler (e.g. RDS Proxy) must pass the `SET LOCAL` and cross-tenant concurrency tests first.
+- In implementation, the predicate reads the setting through a `STABLE` function (e.g. `organization_id = (select app.current_org_id())`) so it's evaluated once per statement (review DB-2).
+- All tenant queries run inside the explicit `withTenant` / `withUser` / `withSystem` wrappers in `src/platform/db`. Application modules never open connections (ADR-0014).
 
 ### 4.2 Roles
 
@@ -275,8 +312,10 @@ create policy tenant_isolation on devices
 | --- | --- | --- |
 | `schoolos_owner` | Owns schema; runs migrations | Owner (not used at runtime) |
 | `app_user` | Web + worker runtime | Enforced |
-| `app_credentials_reader` | Worker-only access to `integration_credentials` | Enforced + table grant limited |
-| `platform_ops` | Audited cross-tenant operator queries (billing, support tooling) | Separate explicit policies; every session audited |
+| `app_credentials_reader` | Worker-only access to `integration_credentials` (M2) | Enforced + table grant limited |
+| `app_auth` | Auth module access to `user_sessions` and `user_session_credentials` (M1) | Table grants limited to auth tables |
+| `audit_maintainer` | Prefix-only audit purge and checkpoint writes (ADR-0017); created and tested in M1, scheduled from M5 | No access outside audit tables |
+| `platform_ops` | Audited cross-tenant operator queries (billing, support tooling) | **Deferred to M5**; not created until a concrete use case exists (review DB-9) |
 
 ### 4.3 Tests (required in M1)
 

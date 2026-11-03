@@ -88,7 +88,7 @@ Feature flags that expand data collection (e.g. storing recent users, future scr
 
 ## 8. Sub-processors
 
-Maintain a public sub-processor list (cloud host, database provider, IdP, email delivery, error tracking). Error-tracking and analytics tools must be configured to exclude student data, or not used on pages that render it.
+Maintain a public sub-processor list (cloud host, database provider, IdP, email delivery, error tracking). Known so far: **AWS** (hosting, database, secrets, in `us-east-2`) and **Supabase** (staff identity and MFA records only; no student, device, or application data). The email provider is open (OPEN_QUESTIONS T-18). Error-tracking and analytics tools must be configured to exclude student data, or not used on pages that render it.
 
 ## 9. Items requiring legal validation (tracked in OPEN_QUESTIONS)
 

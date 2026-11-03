@@ -41,14 +41,15 @@ Scope:
 - Execute the verification spike in [`CHROMEOS_INTEGRATION.md` §9](CHROMEOS_INTEGRATION.md#9-verification-plan-m0-spike). Throwaway scripts live outside the main codebase or in a clearly marked `spikes/` folder and are not production code.
 - Start Google OAuth app verification and investigate partner programs and API terms.
 - Engage education-privacy counsel; begin DPA template.
-- Choose cloud provider and IdP (ADR).
+- Choose cloud provider and IdP (ADR). **Done 2026-11-02:** AWS `us-east-2` ([ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md)); Supabase Auth for identity and TOTP only ([ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md), [ADR-0016](DECISIONS/0016-session-model.md)).
 
 Completion criteria:
 - [ ] All [Verified-Docs] items needed for M2–M3 are either [Verified-Tenant] or explicitly re-scoped.
 - [ ] Google auth model decided (ADR written).
 - [ ] OAuth verification requirements known (timeline, scopes classification).
 - [ ] Counsel engaged; list of required legal deliverables for launch.
-- [ ] Cloud provider chosen; production account created with MFA on all human accounts.
+- [x] Cloud provider chosen (AWS, ADR-0018).
+- [ ] AWS accounts created (Organizations; dev/staging/prod) with MFA on all human access and budgets/alerts configured before any workload.
 
 Risks: Google verification lead time; device licensing cost; partner-program requirements gate access.
 
@@ -56,7 +57,7 @@ Risks: Google verification lead time; device licensing cost; partner-program req
 
 **Goal:** Secure multi-tenant foundation with no device features. Requires no Google API access.
 
-Detailed plan: [`M1_IMPLEMENTATION_PLAN.md`](M1_IMPLEMENTATION_PLAN.md). Pre-M1 findings: [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md). Staging infrastructure depends on the cloud provider decision (OPEN_QUESTIONS T-1); all other M1 work does not.
+Detailed plan: [`M1_IMPLEMENTATION_PLAN.md`](M1_IMPLEMENTATION_PLAN.md). Pre-M1 findings: [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md). The cloud provider is decided (AWS, ADR-0018). Staging infrastructure still depends on the IaC tool (T-16) and egress design (T-17); all other M1 work does not.
 
 Scope:
 - Next.js + TypeScript app, worker entrypoint, PostgreSQL migrations, local Docker Compose for DB.
