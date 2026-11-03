@@ -3,6 +3,7 @@
 - **Status:** Complete. All 12 validation rows passed. ADR-0014 was **Accepted** on 2026-11-02 with the amended transaction-wrapper architecture.
 - **Date:** 2026-11-02
 - **Branch:** `spike/db-tooling` (throwaway; not merged)
+- **Integration (2026-11-02):** Merged into `chore/integrate-db-tooling-spike` as commit `30932d5`. The historical "not merged" line above is the status when this report was written.
 - **Decision under test:** [ADR-0014](DECISIONS/0014-database-tooling.md), dbmate + Kysely + node-postgres
 - **Plan reference:** [M1_IMPLEMENTATION_PLAN.md](M1_IMPLEMENTATION_PLAN.md) step 0a
 - **Code:** [`spikes/db-tooling/`](../spikes/db-tooling/)

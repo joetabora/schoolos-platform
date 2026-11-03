@@ -320,7 +320,7 @@ Each step is one or a few reviewable PRs, with an exit check. Don't start a step
 | **9** | Hardening: pool-leak concurrency test (TST-3), audit throughput check (A-6, target 50 audited writes/s per org), log redaction test, header test, threat-model review of the M1 surface | — | All suites green; threat-model review recorded |
 | **10** | AWS environments: accounts, budgets and anomaly detection first, then IaC for `dev` and `staging` (VPC, ALB, ECS Fargate web + worker, RDS PostgreSQL 18, Secrets Manager, KMS keys including the audit signing key, ECR, CloudWatch), GitHub OIDC deploy roles, migration task, pipeline deploys, TST-3 against `pg` Pool → RDS, staging smoke | ADR-0018 (Accepted); T-16 IaC tool; T-17 egress | Staging deployed by pipeline only; budgets active; isolation suite passes against staging DB; no public IPs on tasks or RDS |
 
-Step 1 needs only Node.js and pnpm. Steps 0a and 2 need local Docker. Step 0b needs a non-production Supabase project. Steps 3–9 run on `local` + CI. Only step 10 creates AWS resources, and it requires explicit approval before anything is provisioned.
+Step 1 needs only Node.js and pnpm. Step 0a is complete. Step 2 still requires local Docker for database development and validation. Step 0b needs a non-production Supabase project. Steps 3–9 run on `local` + CI. Only step 10 creates AWS resources, and it requires explicit approval before anything is provisioned.
 
 ## 5. M1 definition of done
 
