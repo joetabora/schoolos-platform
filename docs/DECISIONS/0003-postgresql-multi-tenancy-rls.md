@@ -4,6 +4,8 @@
 - **Date:** 2026-11-02
 - **Related:** DATA_MODEL §4, SECURITY_MODEL T1/T2
 
+Independent review by at least one other engineer is still required before this ADR can be Accepted ([DECISIONS README](README.md)). Later Accepted ADRs and the M1 plan treat the shared-schema forced-RLS model as the working design for implementation planning. That does not accept this ADR or change the decision below.
+
 ## Context
 
 Multi-tenancy is required from day one. Cross-tenant exposure is the highest-impact failure mode. Application-layer checks alone are vulnerable to a single missed filter.
