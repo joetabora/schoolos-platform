@@ -109,7 +109,7 @@ IDs are stable and referenced by tests and ADRs.
 - **FR-IAM-1** Staff users shall authenticate via the configured identity provider. Password plus MFA, or Google sign-in for staff, are both candidates (see OPEN_QUESTIONS).
 - **FR-IAM-2** Roles shall be assigned per organization and optionally per school scope.
 - **FR-IAM-3** Authorization shall be enforced server-side on every API request and additionally by PostgreSQL RLS.
-- **FR-IAM-4** Built-in roles for MVP: `org_owner`, `org_admin`, `school_admin`, `technician`, `security_analyst`, `auditor` (read-only), `support_delegate` (internal, time-boxed). Teacher role is defined but has no MVP permissions.
+- **FR-IAM-4** Built-in roles for MVP: `org_owner`, `org_admin`, `school_admin`, `technician`, `security_analyst`, `auditor` (read-only). Teacher role is defined but has no MVP permissions. SchoolOS support access is time-boxed and customer-granted; whether it's modelled as a role or as grants is pending decision D-7 in [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md) (M5).
 - **FR-IAM-5** Permission changes shall be audited.
 
 ### Integrations

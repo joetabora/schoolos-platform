@@ -110,7 +110,7 @@ Rules:
 ### 5.2 REST API
 
 - Base path `/api/v1`. Resource-oriented, JSON, cursor pagination.
-- Every mutating endpoint accepts an `Idempotency-Key` header; keys are stored per organization for 24 h.
+- Every mutating endpoint accepts an `Idempotency-Key` header; the API replay cache stores keys and responses per organization for 24 h. Separately, command creation records its key permanently on `commands.idempotency_key` (unique per organization) so a command can never be created twice.
 - Errors use a consistent problem format (`type`, `title`, `status`, `detail`, `correlation_id`).
 - An OpenAPI document is generated from the route schemas and checked into the repo from M1.
 - Authentication: session cookie for the browser UI; scoped API tokens for machine clients (post-MVP).
@@ -175,14 +175,32 @@ See [ADR-0004](DECISIONS/0004-authentication-provider.md).
 
 ### 10.1 Lifecycle
 
+Approval happens once per **command** (one request, possibly many devices). Execution is tracked per **command target** (one device).
+
+Command-level states (`commands.status`):
+
 ```mermaid
 stateDiagram-v2
   [*] --> requested
   requested --> pending_approval: approval policy requires it
-  requested --> queued: no approval required
-  pending_approval --> queued: approved
+  requested --> approved: no approval required
+  pending_approval --> approved
   pending_approval --> rejected
   pending_approval --> cancelled
+  approved --> in_progress: targets queued
+  in_progress --> completed: all targets succeeded
+  in_progress --> completed_with_errors: any target not succeeded
+  rejected --> [*]
+  cancelled --> [*]
+  completed --> [*]
+  completed_with_errors --> [*]
+```
+
+Target-level states (`command_targets.status`), created when the command is approved:
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued
   queued --> dispatching
   queued --> cancelled
   dispatching --> dispatched: provider/agent accepted
@@ -197,14 +215,13 @@ stateDiagram-v2
   succeeded --> [*]
   failed --> [*]
   expired --> [*]
-  rejected --> [*]
   cancelled --> [*]
   unknown --> [*]
 ```
 
-- Each transition is an **append-only** row in `command_events` with timestamp, actor (user, system, provider, device), and raw provider payload reference.
-- `commands.status` is a denormalized projection of the latest event, updated in the same transaction.
-- Provider mapping example (Google Directory API command states, verified in CHROMEOS_INTEGRATION): `PENDING → dispatched`, `SENT_TO_CLIENT → dispatched (sub-state sent)`, `ACKED_BY_CLIENT → acknowledged`, `EXECUTED_BY_CLIENT + SUCCESS → succeeded`, `EXECUTED_BY_CLIENT + FAILURE → failed`, `EXPIRED → expired`, `CANCELLED → cancelled`.
+- Each target transition is an **append-only** row in `command_events` with timestamp, actor (user, system, provider, device), and raw provider payload reference. Command-level transitions (request, approval, rejection, cancellation) are recorded in `command_approvals` and the audit log.
+- `command_targets.status` is a denormalized projection of that target's latest `command_events` row, updated in the same transaction. `commands.status` is an aggregate of its targets' statuses, recomputed in the same transaction as any target change.
+- Provider mapping example (Google Directory API command states, verified in CHROMEOS_INTEGRATION): `PENDING → dispatched`, `SENT_TO_CLIENT → dispatched (sub-state sent)`, `ACKED_BY_CLIENT → acknowledged`, `EXECUTED_BY_CLIENT + SUCCESS → succeeded`, `EXECUTED_BY_CLIENT + FAILURE → failed`, `EXECUTED_BY_CLIENT + IGNORED → failed (reason: ignored by client)`, `EXPIRED → expired`, `CANCELLED → cancelled`.
 - `unknown` exists so we never guess. If we lose track of a command, we say so.
 
 ### 10.2 Dispatch

@@ -54,7 +54,9 @@ Risks: Google verification lead time; device licensing cost; partner-program req
 
 ## M1: Platform skeleton
 
-**Goal:** Secure multi-tenant foundation with no device features.
+**Goal:** Secure multi-tenant foundation with no device features. Requires no Google API access.
+
+Detailed plan: [`M1_IMPLEMENTATION_PLAN.md`](M1_IMPLEMENTATION_PLAN.md). Pre-M1 findings: [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md). Staging infrastructure depends on the cloud provider decision (OPEN_QUESTIONS T-1); all other M1 work does not.
 
 Scope:
 - Next.js + TypeScript app, worker entrypoint, PostgreSQL migrations, local Docker Compose for DB.

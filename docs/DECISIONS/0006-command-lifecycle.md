@@ -11,8 +11,9 @@ Remote commands (reboot, wipe, powerwash, disable, remote access) are high-impac
 ## Decision
 
 - Persist every command **before** dispatch, with requester, reason, targets, parameters, approval policy snapshot, expiry, and idempotency key.
-- Model per-device execution as `command_targets` with a SchoolOS lifecycle (`requested → pending_approval → queued → dispatching → dispatched → acknowledged → succeeded | failed | expired | cancelled | rejected | unknown`).
-- Record every transition in append-only `command_events` with actor type and raw provider state.
+- Approval is per command: `requested → pending_approval → approved | rejected | cancelled`, then `in_progress → completed | completed_with_errors` as an aggregate of its targets.
+- Model per-device execution as `command_targets` with a SchoolOS lifecycle (`queued → dispatching → dispatched → acknowledged → succeeded | failed | expired | cancelled | unknown`).
+- Record every target transition in append-only `command_events` with actor type and raw provider state.
 - Dispatch and polling happen in worker jobs, never in request handlers.
 - Include an explicit `unknown` terminal state rather than inferring outcomes.
 - High-impact commands require approval per org policy; requester cannot self-approve.

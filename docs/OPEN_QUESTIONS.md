@@ -48,6 +48,11 @@ Status: `open`, `investigating`, `resolved`, `wont_resolve`.
 | T-8 | Device CA: managed private CA service vs self-operated? | M7 | open |
 | T-9 | Which Linux distribution is the base for the SchoolOS educational OS and the M7 development target? | M7 | open |
 | T-10 | Audit log external anchoring mechanism (object-lock storage, transparency log)? | M5 | open |
+| T-11 | Does PostgreSQL run in our own cloud account, or co-hosted with Supabase? If co-hosted, how is Supabase's auto-generated data API disabled and verified? (Review D-2, S-14) | M1 | open |
+| T-12 | Does Supabase Auth provide TOTP MFA with a server-verifiable assurance level, reauthentication for step-up, and configurable idle/absolute session limits on our plan? (Review A-1 to A-3) | M1 | open |
+| T-13 | Which migration tool and DB access library? (Review D-4) | M1 | open |
+| T-14 | Which PostgreSQL major version does the chosen managed provider support, and is native `uuidv7()` available? (Review D-3) | M1 | open |
+| T-15 | How should audit logs reconcile immutability with retention and data-subject deletion? (Review C-1, C-2, D-5) | M1 | open |
 
 ## Business
 

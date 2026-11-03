@@ -76,6 +76,8 @@ Give schools a trustworthy, transparent, and secure way to manage and protect th
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Milestones M0–M9, dependencies, risks, exit criteria |
 | [`docs/DECISIONS/`](docs/DECISIONS/) | Architecture decision records |
 | [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) | Unresolved technical, business, legal, integration questions |
+| [`docs/ARCHITECTURE_READINESS_REVIEW.md`](docs/ARCHITECTURE_READINESS_REVIEW.md) | Pre-M1 review: contradictions, gaps, assumptions, required decisions |
+| [`docs/M1_IMPLEMENTATION_PLAN.md`](docs/M1_IMPLEMENTATION_PLAN.md) | Detailed M1 plan and implementation sequence |
 
 ## Repository status and conventions
 

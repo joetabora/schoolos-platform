@@ -171,7 +171,7 @@ Static groups in MVP: `device_groups(id, organization_id, school_id NULL, name, 
 | `reason` | required free text (staff-authored; guidance not to include student details) |
 | `requested_by_membership_id` | |
 | `approval_policy` | snapshot of policy at request time |
-| `status` | projection: `requested`, `pending_approval`, `queued`, `in_progress`, `completed`, `completed_with_errors`, `rejected`, `cancelled` |
+| `status` | approval states plus aggregate of targets: `requested`, `pending_approval`, `approved`, `in_progress`, `completed`, `completed_with_errors`, `rejected`, `cancelled` |
 | `expires_at` | |
 | `idempotency_key` | unique per organization |
 | `is_remote_access` | boolean, for audit filtering |
