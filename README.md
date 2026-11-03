@@ -58,7 +58,7 @@ Give schools a trustworthy, transparent, and secure way to manage and protect th
 | --------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Web platform          | TypeScript (strict), Next.js, Tailwind CSS, shadcn/ui; pnpm; Node.js 26 LTS                   | Single app serving UI and REST API, plus a worker entrypoint ([ADR-0012](docs/DECISIONS/0012-tooling.md))                                                        |
 | Database              | AWS RDS for PostgreSQL 18 (Docker `postgres:18` locally and in CI)                            | Primary system of record, with row-level security; app-generated UUIDv7 ([ADR-0013](docs/DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md))      |
-| Database tooling      | dbmate, Kysely, node-postgres                                                                 | Proposed, pending spike ([ADR-0014](docs/DECISIONS/0014-database-tooling.md))                                                                                    |
+| Database tooling      | dbmate, Kysely, node-postgres                                                                 | Accepted: one pool, one root Kysely, handlers receive only `Transaction` ([ADR-0014](docs/DECISIONS/0014-database-tooling.md))                                    |
 | Authentication        | Supabase Auth for identity and TOTP MFA only                                                  | SchoolOS-authoritative sessions and authorization ([ADR-0004](docs/DECISIONS/0004-authentication-provider.md), [ADR-0016](docs/DECISIONS/0016-session-model.md)) |
 | Hosting               | AWS `us-east-2`: ECS Fargate (web + worker), ALB, RDS, Secrets Manager, KMS                   | With budgets and cost controls ([ADR-0018](docs/DECISIONS/0018-aws-infrastructure-and-deployment.md))                                                            |
 | Background jobs       | PostgreSQL-backed queue first, Redis when needed                                              | [ADR-0009](docs/DECISIONS/0009-background-jobs.md)                                                                                                               |
@@ -81,6 +81,7 @@ Give schools a trustworthy, transparent, and secure way to manage and protect th
 | [`docs/ARCHITECTURE_READINESS_REVIEW.md`](docs/ARCHITECTURE_READINESS_REVIEW.md) | Pre-M1 review: contradictions, gaps, assumptions, required decisions |
 | [`docs/M1_IMPLEMENTATION_PLAN.md`](docs/M1_IMPLEMENTATION_PLAN.md)               | Detailed M1 plan and implementation sequence                         |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)                                     | Local setup, environment, scripts, CI pins, repository structure     |
+| [`docs/SPIKE_DB_TOOLING_REPORT.md`](docs/SPIKE_DB_TOOLING_REPORT.md)              | ADR-0014 spike results (Accepted)                                    |
 
 ## Repository status and conventions
 

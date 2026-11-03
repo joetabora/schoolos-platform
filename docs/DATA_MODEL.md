@@ -304,7 +304,7 @@ create policy tenant_isolation on devices
 - The application DB role (`app_user`) is not the table owner and does not have `BYPASSRLS`.
 - Connection pooling uses a standard `pg` `Pool` with direct private connectivity to RDS (ADR-0013). Each tenant transaction runs on one checked-out connection; session-level `SET` is forbidden (lint + review rule) to prevent context leaking between pooled connections. Any future external pooler (e.g. RDS Proxy) must pass the `SET LOCAL` and cross-tenant concurrency tests first.
 - In implementation, the predicate reads the setting through a `STABLE` function (e.g. `organization_id = (select app.current_org_id())`) so it's evaluated once per statement (review DB-2).
-- All tenant queries run inside the explicit `withTenant` / `withUser` / `withSystem` wrappers in `src/platform/db`. Application modules never open connections (ADR-0014).
+- All tenant queries run inside the explicit `withTenant` / `withUser` / `withSystem` wrappers in `src/platform/db`. That module holds one pool and one root Kysely; handlers receive only a Kysely `Transaction`. Application modules never open connections (ADR-0014). Missing tenant context matches no rows.
 
 ### 4.2 Roles
 

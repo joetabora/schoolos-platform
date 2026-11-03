@@ -1,0 +1,2 @@
+# Supply-chain guard: refuse package versions published less than 7 days ago.
+minimumReleaseAge: 10080
