@@ -39,7 +39,7 @@ Background is in the readiness review, §7. Decisions were ratified 2026-11-02.
 | D-2 Hosting | AWS `us-east-2`; RDS PostgreSQL; Supabase for Auth only; ECS Fargate web + worker behind ALB; Secrets Manager + KMS | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md), [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) | Accepted (IaC tool and egress open: T-16, T-17) | 2, 10 |
 | D-3 Postgres and UUIDs | PostgreSQL 18 (18.6 pinned in RDS, Docker, CI); UUIDv7 generated in the app | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted | 2 |
 | Pooling | Standard `pg` Pool, direct private RDS connectivity; no RDS Proxy until needed | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted | 2 |
-| D-4 DB tooling | dbmate + Kysely + node-postgres; direct SQL for RLS/policies/triggers/functions/locks/audit | [ADR-0014](DECISIONS/0014-database-tooling.md) | **Proposed: spike required** | 2 |
+| D-4 DB tooling | dbmate + Kysely + node-postgres; direct SQL for RLS/policies/triggers/functions/locks/audit | [ADR-0014](DECISIONS/0014-database-tooling.md) | **Proposed: spike passed 2026-11-02 ([report](SPIKE_DB_TOOLING_REPORT.md)); acceptance pending review** | 2 |
 | D-5 Audit | Opaque-ID hashed core, redactable details, KMS-signed checkpoints, prefix purge, platform chain | [ADR-0017](DECISIONS/0017-audit-log-design.md) | Accepted | 6 |
 | D-6 Org resolution | Org in URL path; membership + permissions verified per request | [ADR-0015](DECISIONS/0015-organization-resolution.md) | Accepted | 4 |
 | D-7 Support access | Temporary grants via `authorize()`; no support membership | [ADR-0019](DECISIONS/0019-support-access-grants.md) | Accepted (M5) | — |

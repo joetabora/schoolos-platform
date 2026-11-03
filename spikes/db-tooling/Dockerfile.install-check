@@ -1,0 +1,23 @@
+# V4: clean, CI-like install from the committed lockfile at pinned versions.
+# Built for linux/arm64 and linux/amd64 by scripts/install-check.sh.
+FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39
+
+RUN npm install --global pnpm@12.16.1 && pnpm --version
+
+WORKDIR /spike
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+RUN cp pnpm-lock.yaml /tmp/pnpm-lock.orig \
+ && pnpm install --frozen-lockfile \
+ && cmp pnpm-lock.yaml /tmp/pnpm-lock.orig \
+ && echo "lockfile unchanged"
+
+COPY tsconfig.json vitest.config.ts ./
+COPY src ./src
+COPY tests ./tests
+RUN ./node_modules/.bin/dbmate --version \
+ && ./node_modules/.bin/tsc --version \
+ && ./node_modules/.bin/tsc --noEmit -p tsconfig.json \
+ && for p in kysely pg kysely-codegen vitest; do \
+      printf '%s ' "$p"; node -p "JSON.parse(require('fs').readFileSync('node_modules/$p/package.json','utf8')).version"; \
+    done \
+ && node --version && uname -m
