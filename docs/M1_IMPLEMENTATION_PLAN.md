@@ -1,6 +1,6 @@
 # M1 Implementation Plan: Platform Skeleton
 
-- **Status:** Ready to start. Decisions D-1 to D-8 were ratified on 2026-11-02 (§2). Two decisions remain Proposed until their compatibility spikes pass: database tooling (ADR-0014) and the Supabase session flow (ADR-0016). Those spikes are M1 step 0.
+- **Status:** Ready to start. Decisions D-1 to D-8 were ratified on 2026-11-02 (§2). ADR-0014 was Accepted after the 2026-11-02 spike. ADR-0016 remains Proposed until its compatibility spike passes (M1 step 0b).
 - **Milestone:** M1 ([`ROADMAP.md`](ROADMAP.md#m1-platform-skeleton))
 - **Inputs:** [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md), [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md), [`DATA_MODEL.md`](DATA_MODEL.md), [`SECURITY_MODEL.md`](SECURITY_MODEL.md)
 - **Google dependency:** **None.** M1 contains no provider code, no device tables, and no Google credentials. It can be completed in full before the M0 Google spike finishes.
@@ -39,7 +39,7 @@ Background is in the readiness review, §7. Decisions were ratified 2026-11-02.
 | D-2 Hosting | AWS `us-east-2`; RDS PostgreSQL; Supabase for Auth only; ECS Fargate web + worker behind ALB; Secrets Manager + KMS | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md), [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) | Accepted (IaC tool and egress open: T-16, T-17) | 2, 10 |
 | D-3 Postgres and UUIDs | PostgreSQL 18 (18.6 pinned in RDS, Docker, CI); UUIDv7 generated in the app | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted | 2 |
 | Pooling | Standard `pg` Pool, direct private RDS connectivity; no RDS Proxy until needed | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted | 2 |
-| D-4 DB tooling | dbmate + Kysely + node-postgres; direct SQL for RLS/policies/triggers/functions/locks/audit | [ADR-0014](DECISIONS/0014-database-tooling.md) | **Proposed: spike passed 2026-11-02 ([report](SPIKE_DB_TOOLING_REPORT.md)); acceptance pending review** | 2 |
+| D-4 DB tooling | dbmate + Kysely + node-postgres; one pool and one root Kysely; handlers receive only a Kysely `Transaction`; direct SQL for RLS/policies/triggers/functions/locks/audit | [ADR-0014](DECISIONS/0014-database-tooling.md) | Accepted ([report](SPIKE_DB_TOOLING_REPORT.md)) | 2 |
 | D-5 Audit | Opaque-ID hashed core, redactable details, KMS-signed checkpoints, prefix purge, platform chain | [ADR-0017](DECISIONS/0017-audit-log-design.md) | Accepted | 6 |
 | D-6 Org resolution | Org in URL path; membership + permissions verified per request | [ADR-0015](DECISIONS/0015-organization-resolution.md) | Accepted | 4 |
 | D-7 Support access | Temporary grants via `authorize()`; no support membership | [ADR-0019](DECISIONS/0019-support-access-grants.md) | Accepted (M5) | — |
@@ -82,7 +82,7 @@ tests/
 - pnpm pinned via `packageManager`; Node.js 26 LTS pinned in `.nvmrc`/`.node-version`, `engines`, the container base image, and CI.
 - Single Next.js App Router application with Tailwind CSS and shadcn/ui; no monorepo tooling.
 - TypeScript `strict` (plus `noUncheckedIndexedAccess`, `noImplicitOverride`), no `any` in `src/platform/**` without a justification comment.
-- ESLint import-boundary rules: `src/modules/**` cannot import `src/providers/**` (ADR-0005); only `src/platform/auth/**` may import the Supabase SDK (ADR-0004); only `src/platform/db/**` may import `pg` or construct Kysely instances (ADR-0014).
+- ESLint import-boundary rules: `src/modules/**` cannot import `src/providers/**` (ADR-0005); only `src/platform/auth/**` may import the Supabase SDK (ADR-0004); only `src/platform/db/**` may import `pg` or construct Kysely instances, and it holds the only pool and root Kysely (ADR-0014).
 - No Supabase client code runs in the browser for authentication state (ADR-0016).
 - Formatter, type check, lint, and tests run in CI on every PR.
 - Dependency vulnerability scan and secret scan in CI.
@@ -183,7 +183,7 @@ From [`DATA_MODEL.md`](DATA_MODEL.md) §3.1, plus gaps from review DB-5:
 | `platform_audit_logs` | platform only | not visible to `app_user` tenant queries |
 | job queue tables | n/a | created by the chosen queue library (ADR-0009, T-4) |
 
-Conventions: PostgreSQL 18 (pinned minor, identical in Docker, CI, and RDS), UUIDv7 IDs generated in the application (ADR-0013), `created_at`/`updated_at` with trigger (DB-6), `text` + `check` for statuses (DB-8), `ON DELETE RESTRICT` by default (DB-10), every tenant index leads with `organization_id` (DB-2). Migrations are plain SQL run by dbmate; queries use Kysely bound to the tenant transaction's `pg` client (ADR-0014, pending spike).
+Conventions: PostgreSQL 18 (pinned minor, identical in Docker, CI, and RDS), UUIDv7 IDs generated in the application (ADR-0013), `created_at`/`updated_at` with trigger (DB-6), `text` + `check` for statuses (DB-8), `ON DELETE RESTRICT` by default (DB-10), every tenant index leads with `organization_id` (DB-2). Migrations are plain SQL run by dbmate; queries use a Kysely `Transaction` from the single root instance in `src/platform/db` (ADR-0014).
 
 **Database roles:** `schoolos_owner` (migrations), `app_user` (runtime, no `BYPASSRLS`, not owner), `app_auth` (auth module: session tables), `audit_maintainer` (retention purge only; not used in M1 runtime but created and tested), `app_worker` if the worker needs narrower grants than `app_user`.
 
@@ -214,12 +214,14 @@ create function app.current_user_id() returns uuid language sql stable
 
 All tenant tables use `enable` **and** `force row level security`. Missing context matches no rows (fail closed).
 
-**Transaction wrappers** (the only way to query):
-- `withTenant({ orgId, userId }, fn)`: `BEGIN; SET LOCAL app.current_org_id; SET LOCAL app.current_user_id; fn; COMMIT`
+**Transaction wrappers** (the only way to query; ADR-0014):
+- `src/platform/db` holds one `pg.Pool` and one root `Kysely` instance. Handlers receive only a Kysely `Transaction`. They never receive the pool, the root instance, or a raw `pg` client.
+- `withTenant({ orgId, userId }, fn)`: Kysely-managed `BEGIN`; `set_config(..., true)` for `app.current_org_id` and `app.current_user_id`; `fn(tx)`; probe that the transaction is still open; `COMMIT`. Nested `transaction()` is rejected. A handle used after completion is rejected.
+- If a database operation fails, the wrapper fails the request even if `fn` caught the original exception (aborted-transaction probe, SQLSTATE `25P02`). Tests cover handle lifetime and swallowed errors.
 - `withUser({ userId }, fn)`: pre-tenant bootstrap queries only
 - `withSystem({ orgId, job }, fn)`: worker jobs; sets `actor_type=system` for audit (S-3)
 - Org enumeration for schedulers goes through one `SECURITY DEFINER` function returning IDs only, owned by a restricted role (S-3)
-- Session-level `SET` is banned by lint and code review (ADR-0003)
+- Session-level `SET` is banned by lint and code review (ADR-0003). Missing tenant context denies access.
 
 ### 3.7 Audit logging (D-5)
 
@@ -305,10 +307,10 @@ Each step is one or a few reviewable PRs, with an exit check. Don't start a step
 
 | Step | Work | Blocking decisions | Exit check |
 | --- | --- | --- | --- |
-| **0a** | **ADR-0014 compatibility spike** (2 days, throwaway branch, Docker `postgres:18.6`): dbmate + Kysely + `pg` against the seven checks in ADR-0014 | — | Results recorded in ADR-0014; status Accepted or superseded |
+| **0a** | **ADR-0014 compatibility spike** (2 days, throwaway branch, Docker `postgres:18.6`): dbmate + Kysely + `pg` against the seven checks in ADR-0014 | — | **Done 2026-11-02.** Results in [`SPIKE_DB_TOOLING_REPORT.md`](SPIKE_DB_TOOLING_REPORT.md); ADR-0014 Accepted |
 | **0b** | **ADR-0016 compatibility spike** (2 days, non-production Supabase project): server-side sign-in, TOTP, JWKS verification, refresh, revocation, Data API disabled, local/CI auth approach | Supabase dev project exists | Results recorded in ADR-0016; status Accepted or amended |
 | **1** | Foundation: Next.js + TS strict + Tailwind + shadcn/ui, pinned Node.js 26 and pnpm, lint with import boundaries, formatter, test runner, Docker Compose `postgres:18.6`, config validation, logger with redaction, CI pipeline (type, lint, unit, secret scan, dependency scan) | ADR-0012 (Accepted) | CI green on an empty app; `/api/v1/health` returns 200 |
-| **2** | Database baseline: DB roles, `app` schema and context functions, dbmate migrations, `pg` Pool + `withTenant`/`withUser`/`withSystem` + Kysely binding, app-side UUIDv7, the RLS coverage test (TST-1), no-context test, migration test (TST-6) | ADR-0013 (Accepted), ADR-0014 (after 0a) | Coverage test fails on a deliberately unprotected table and passes once RLS is added |
+| **2** | Database baseline: DB roles, `app` schema and context functions, dbmate migrations, `pg` Pool + `withTenant`/`withUser`/`withSystem` (one pool, one root Kysely, handlers get only `Transaction`; aborted-transaction probe; handle-lifetime and swallowed-error tests), app-side UUIDv7, the RLS coverage test (TST-1), no-context test, migration test (TST-6) | ADR-0013 (Accepted), ADR-0014 (Accepted) | Coverage test fails on a deliberately unprotected table and passes once RLS is added |
 | **3** | Identity: `users`, `user_sessions`, `user_session_credentials`, `AuthProvider`, fake adapter + startup guard (TST-8), Supabase adapter, server-side sign-in, JWT verification, TOTP MFA, SchoolOS session enforcement (idle/absolute/revocation), fresh-MFA step-up, rate limiting, security headers, CSRF/origin check | ADR-0016 (after 0b) | Sign-in + MFA works locally; session, JWT-rejection, and no-browser-token tests pass |
 | **4** | Tenancy core: `organizations`, `organization_settings`, `schools`, operator CLI, route wrapper with org resolution, `/me`, `/me/organizations`, org and school endpoints, route-isolation harness (TST-2) | D-6 | Table + route isolation suites pass for these tables and routes |
 | **5** | RBAC: `permissions`, `roles`, `role_permissions` seeds, `memberships`, `membership_school_scopes`, `authorize()`, permission matrix tests (TST-4), school-scope tests | — | Matrix tests pass; route harness covers every route |
@@ -324,7 +326,7 @@ Steps 0a and 1–2 need only local Docker. Step 0b needs a non-production Supaba
 
 All of the following must be met (they extend the M1 criteria in ROADMAP):
 
-- [ ] ADR-0014 and ADR-0016 moved to Accepted after their spikes (ADR-0012, 0013, 0015, 0017, 0018, 0019 already Accepted). T-16 and T-17 decided.
+- [x] ADR-0014 Accepted after the 2026-11-02 spike. [ ] ADR-0016 moved to Accepted after its spike (ADR-0012, 0013, 0015, 0017, 0018, 0019 already Accepted). T-16 and T-17 decided.
 - [ ] Every tenant table has forced RLS (TST-1 green).
 - [ ] Cross-tenant table and route suites pass for every table and route (TST-2 green).
 - [ ] No-context queries return zero rows.
@@ -344,8 +346,8 @@ All of the following must be met (they extend the M1 criteria in ROADMAP):
 | Risk | Mitigation |
 | --- | --- |
 | Supabase server-side flows don't work as documented (e.g. server-side MFA verify) | Step 0b spike; SchoolOS sessions are authoritative regardless; amend ADR-0016 if flows differ |
-| dbmate or Kysely fails a compatibility check | Step 0a spike; supersede ADR-0014 before step 2 |
-| Query library makes it easy to bypass `withTenant` | Lint rule: no `pg`/Kysely imports outside `src/platform/db`; code review checklist |
+| dbmate or Kysely fails a compatibility check | **Closed 2026-11-02:** spike passed; ADR-0014 Accepted. Remaining unvalidated: RDS RLS, TLS, failed-rollback dirty connections, cluster-wide role collisions (ADR-0014 remaining risks) |
+| Query library makes it easy to bypass `withTenant` | Lint rule: no `pg`/Kysely imports outside `src/platform/db`; handlers receive only `Transaction`; aborted-transaction probe; handle-lifetime tests |
 | RLS performance surprises | `STABLE` context functions, leading `organization_id` indexes, `EXPLAIN` checks in step 9 |
 | Audit lock contention | Throughput check in step 9; revisit design if below target |
 | AWS baseline costs (ALB, NAT, RDS) higher than expected | Budgets and alerts before deployment; dev scaled to zero; egress design (T-17) evaluated for cost |

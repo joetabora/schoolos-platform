@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { Kysely, PostgresDialect, sql, type PostgresPool } from "kysely";
 import { poolConfig } from "../src/config.ts";
-import { createTenantDb, type TenantDb, type Tx } from "../src/db.ts";
+import { createTenantDb, TransactionAbortedError, type TenantDb, type Tx } from "../src/db.ts";
 import type { DB } from "../src/db-types.ts";
 import { createOrgFixture, deleteOrgFixture, rolePool, type OrgFixture } from "./helpers.ts";
 
@@ -110,6 +110,12 @@ describe("V5 Kysely transaction is pinned to one pg connection with transaction-
     await expect(committed.selectFrom("spike.schools").select("id").execute()).rejects.toThrow(
       "Transaction is already committed",
     );
+    await expect(
+      committed
+        .insertInto("spike.school_notes")
+        .values({ id: randomUUID(), organization_id: orgA.orgId, school_id: orgA.schoolIds[0], body: "synthetic leaked handle" })
+        .execute(),
+    ).rejects.toThrow("Transaction is already committed");
 
     let rolledBack: Tx | undefined;
     await expect(
@@ -122,6 +128,23 @@ describe("V5 Kysely transaction is pinned to one pg connection with transaction-
     await expect(rolledBack.selectFrom("spike.schools").select("id").execute()).rejects.toThrow(
       "Transaction is already rolled back",
     );
+  });
+
+  it("a captured handle cannot read another tenant after the connection is reused", async () => {
+    let leaked: Tx | undefined;
+    await dbOne.withTenant(ctxA(), async (tx) => {
+      leaked = tx;
+    });
+    const stale = leaked;
+    if (stale === undefined) throw new Error("handle not captured");
+    const duringB = await dbOne.withTenant({ orgId: orgB.orgId, userId: orgB.userId }, async (tx) => {
+      const live = await tx.selectFrom("spike.schools").select("organization_id").execute();
+      await expect(stale.selectFrom("spike.schools").select("organization_id").execute()).rejects.toThrow(
+        "Transaction is already committed",
+      );
+      return live;
+    });
+    expect(duringB.every((r) => r.organization_id === orgB.orgId)).toBe(true);
   });
 
   it("a handler error rolls back its writes", async () => {
@@ -141,25 +164,39 @@ describe("V5 Kysely transaction is pinned to one pg connection with transaction-
     expect(found).toEqual([]);
   });
 
-  it("hazard: a handler that swallows a database error resolves, but its earlier writes are silently rolled back", async () => {
+  it("a handler that swallows a database error still fails the wrapper, and earlier writes are rolled back", async () => {
     const noteId = randomUUID();
-    const outcome = await dbMany.withTenant(ctxA(), async (tx) => {
-      await tx
-        .insertInto("spike.school_notes")
-        .values({ id: noteId, organization_id: orgA.orgId, school_id: orgA.schoolIds[0], body: "synthetic swallowed" })
-        .execute();
-      try {
-        await sql`select 1 / 0`.execute(tx);
-      } catch {
-        return "handler swallowed the error";
-      }
-      return "unreachable";
-    });
-    expect(outcome).toBe("handler swallowed the error");
+    await expect(
+      dbMany.withTenant(ctxA(), async (tx) => {
+        await tx
+          .insertInto("spike.school_notes")
+          .values({ id: noteId, organization_id: orgA.orgId, school_id: orgA.schoolIds[0], body: "synthetic swallowed" })
+          .execute();
+        try {
+          await sql`select 1 / 0`.execute(tx);
+        } catch {
+          return "handler swallowed the error";
+        }
+        return "unreachable";
+      }),
+    ).rejects.toBeInstanceOf(TransactionAbortedError);
     const found = await dbMany.withTenant(ctxA(), (tx) =>
       tx.selectFrom("spike.school_notes").select("id").where("id", "=", noteId).execute(),
     );
     expect(found).toEqual([]);
+  });
+
+  it("swallowing a database error in a no-context transaction also fails the wrapper", async () => {
+    await expect(
+      dbMany.withoutTenantContext(async (tx) => {
+        try {
+          await sql`select 1 / 0`.execute(tx);
+        } catch {
+          return "handler swallowed the error";
+        }
+        return "unreachable";
+      }),
+    ).rejects.toBeInstanceOf(TransactionAbortedError);
   });
 
   it("malformed tenant IDs are refused before any query runs", async () => {

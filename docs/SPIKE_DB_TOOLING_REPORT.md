@@ -1,6 +1,6 @@
 # Spike report: database tooling (ADR-0014)
 
-- **Status:** Complete. All 12 validation rows passed. ADR-0014 remains **Proposed** pending owner review (§7).
+- **Status:** Complete. All 12 validation rows passed. ADR-0014 was **Accepted** on 2026-11-02 with the amended transaction-wrapper architecture.
 - **Date:** 2026-11-02
 - **Branch:** `spike/db-tooling` (throwaway; not merged)
 - **Decision under test:** [ADR-0014](DECISIONS/0014-database-tooling.md), dbmate + Kysely + node-postgres
@@ -10,7 +10,7 @@
 
 ## 1. Consolidated validation matrix
 
-ADR-0014 lists seven spike items (A1–A7). The step 0a brief lists seven checks (B1–B7). They overlap but aren't identical: ADR-0014 adds rollback (A1) and migration transaction semantics (A2); the brief adds schemas and composite foreign keys (B1), strictness (B5), the full pooled-isolation list (B6), and explicit owner/superuser/`BYPASSRLS` behaviour (B7). The matrix keeps every distinct requirement. ADR-0014 can be Accepted only if every row passes.
+ADR-0014 lists seven spike items (A1–A7). The step 0a brief lists seven checks (B1–B7). They overlap but aren't identical: ADR-0014 adds rollback (A1) and migration transaction semantics (A2); the brief adds schemas and composite foreign keys (B1), strictness (B5), the full pooled-isolation list (B6), and explicit owner/superuser/`BYPASSRLS` behaviour (B7). The matrix keeps every distinct requirement. Every row passed; ADR-0014 was Accepted.
 
 | ID | Requirement | Sources | Pass criterion | Fail criterion |
 | --- | --- | --- | --- | --- |
@@ -84,7 +84,7 @@ Login passwords are set out-of-band (bootstrap and test setup), never in migrati
 
 ## 4. Results
 
-Final clean-state run: `scripts/run-spike.sh` exit 0. 7 test files, **105 tests passed, 0 failed, 0 skipped**. The suite also passed twice more with shuffled file order (seeds 11 and 2026) without a reset, so results don't depend on test order.
+Final clean-state run after acceptance: `scripts/run-spike.sh` exit 0. 7 test files, **107 tests passed, 0 failed, 0 skipped**. Two tests were added for the accepted wrapper (handle reuse across tenants; swallowed errors in a no-context transaction). The original 105 still pass. The suite also passed twice more with shuffled file order (seeds 11 and 2026) without a reset, so results don't depend on test order.
 
 | ID | Result | Evidence (test file) |
 | --- | --- | --- |
@@ -92,7 +92,7 @@ Final clean-state run: `scripts/run-spike.sh` exit 0. 7 test files, **105 tests 
 | V2 | **Pass** | `01-migrations`: four `rollback`s in reverse order, `Applied: 0`, no roles/schemas/versions left, re-apply succeeds and catalog matches again. |
 | V3 | **Pass** | `01-migrations` with probes in `tests/fixtures/txprobe/`: default migrations are atomic, including `CREATE ROLE` (role, table, and version row all absent after `division by zero`). `CREATE INDEX CONCURRENTLY` fails with `25001` in a default migration and succeeds alone with `transaction:false`. A `transaction:false` file with several statements still ran as one implicit transaction (no partial state), so `CREATE INDEX CONCURRENTLY` must be the only statement in its file (otherwise `25001`). |
 | V4 | **Pass** | `scripts/install-check.sh`: `pnpm install --frozen-lockfile` in clean `linux/arm64` and `linux/amd64` containers; lockfile byte-identical afterwards (`cmp`); dbmate 2.37.0, TypeScript 7.0.2, kysely 0.29.7, pg 8.23.1, kysely-codegen 0.20.0, vitest 5.0.5, Node v26.13.0; strict `tsc` also passed inside both containers. |
-| V5 | **Pass** | `04-kysely-transactions`: one backend PID and one `pg_current_xact_id()` across 15 mixed raw/builder statements on a pool of 4; builder queries return only the tenant's rows on all 4 tables; context empty after commit on the same connection; nested `transaction()`, `startTransaction()`, `connection()` rejected at compile time (typed `never`) **and** at runtime; a handle used after commit/rollback throws; handler errors roll back writes; malformed IDs refused before any query. |
+| V5 | **Pass** | `04-kysely-transactions`: one backend PID and one `pg_current_xact_id()` across mixed raw/builder statements; builder queries return only the tenant's rows; nested `transaction()` rejected at compile time and runtime; a handle used after commit/rollback throws and cannot read another tenant after reuse; swallowed database errors fail with `TransactionAbortedError` and roll back earlier writes; malformed IDs refused before any query. |
 | V6 | **Pass** | `04-kysely-transactions`, `06-concurrency`: advisory lock held only by the transaction's backend (in `pg_locks`), another session's `pg_try_advisory_xact_lock` returns false until commit; raw `set_config(..., true)` changes what builder queries see in the same transaction and is gone afterwards; 40 concurrent locked appends get contiguous unique `seq`; control without the lock produces `23505` collisions. |
 | V7 | **Pass** | `07-type-sync`: `kysely-codegen --verify` passes in sync, **fails** (mentioning `drift_probe`) after `ALTER TABLE ... ADD COLUMN`, passes after revert; generated file has no `any`; sources contain no `any`, `as unknown as`, `@ts-ignore`; strict flags asserted; `tsc` passes including `tests/types/kysely-types.typecheck.ts`, whose 7 `@ts-expect-error` lines must stay errors (TS 7.0.2 enforces unused directives, TS2578, confirmed with a probe). |
 | V8.1 / V8.2 | **Pass** | `05-tenant-isolation`: under each org's context, each of the 4 tables returns exactly that org's rows (8 tests). |
@@ -112,7 +112,7 @@ Final clean-state run: `scripts/run-spike.sh` exit 0. 7 test files, **105 tests 
 | Test | What it shows | Consequence for M1 |
 | --- | --- | --- |
 | Per-transaction Kysely over a raw `pg` client (ADR-0014's wording) | Meets item 4 as written, but a nested `db.transaction()` issues `BEGIN`/`COMMIT` on the same client, **commits the outer transaction early and drops the tenant context**; and a handle kept after completion **read org B's rows** once the pooled client was reused for B | Don't build the wrapper this way; use Kysely's own `Transaction` (see §7) |
-| Swallowed database error inside `withTenant` | The handler resolved normally, but its earlier insert was silently lost: PostgreSQL turns `COMMIT` of an aborted transaction into `ROLLBACK`, and neither `pg` nor Kysely raises an error | M1 wrapper should fail the request if the transaction is aborted before commit, plus a review rule against catching DB errors inside handlers |
+| Swallowed database error inside `withTenant` | PostgreSQL turns `COMMIT` of an aborted transaction into a silent `ROLLBACK`. The wrapper now probes after the handler returns and fails with `TransactionAbortedError` (SQLSTATE `25P02`) so the request cannot succeed | Required by the accepted ADR; tests in `04-kysely-transactions.test.ts` |
 | Raw `set_config` inside a tenant transaction | Any code with SQL access inside the transaction can switch the tenant context | Only `src/platform/db` may set `app.*` settings (lint + review); RLS protects against missing filters, not against arbitrary SQL execution |
 
 ## 5. Failures encountered and how they were resolved
@@ -130,12 +130,12 @@ No test was skipped, relaxed, or marked passed without running.
 
 ## 6. Remaining risks and limitations
 
-1. **Not tested on RDS.** RDS's master user is `rds_superuser`, not a true superuser; whether it (or other RDS-managed roles) bypasses RLS is **[Unknown]**. The plan already requires TST-3 against `pg.Pool` → RDS in staging (ADR-0013); add the V9/V10 role checks there.
-2. **TLS not exercised.** The spike used `sslmode=disable` on localhost. RDS requires TLS; dbmate and `pg` TLS settings must be verified in step 10.
-3. **Roles are cluster-wide.** Migrations that create roles fail if two databases in the same cluster both run them (e.g. per-worker test databases in CI). Use one database per cluster in CI, or move role creation to a bootstrap step if parallel databases are needed.
+1. **Not tested on RDS (T-21).** RDS's master user is `rds_superuser`, not a true superuser; whether it (or other RDS-managed roles) bypasses RLS is **[Unknown]**. The plan already requires TST-3 against `pg.Pool` → RDS in staging (ADR-0013); add the V9/V10 role checks there. Do not treat Docker superuser results as RDS validation.
+2. **TLS not exercised (T-22).** The spike used `sslmode=disable` on localhost. RDS requires TLS; dbmate and `pg` TLS settings must be verified in step 10.
+3. **Roles are cluster-wide (T-24).** Migrations that create roles fail if two databases in the same cluster both run them (e.g. per-worker test databases in CI). Use one database per cluster in CI, or move role creation to a bootstrap step if parallel databases are needed.
 4. **`schoolos_owner` needs `CREATEROLE`** for role migrations. On PostgreSQL 16+ it gets only `ADMIN` on roles it creates and can't grant `SUPERUSER`/`BYPASSRLS` (verified), but it remains a powerful role: it must not be used at runtime and its credentials belong only to the migration task.
 5. **Ownership transfer pattern is fiddly.** Moving a `SECURITY DEFINER` function to a `NOLOGIN` owner needed a temporary `SET` membership, temporary `CREATE` on the schema, `EXECUTE` granted beforehand, and a temporary `INHERIT` membership for the down migration. Document it in `db/README.md` in step 2.
-6. **Rollback-failure path untested.** If `ROLLBACK` itself failed without the connection dying, Kysely would release the connection back to the pool. This could not be induced. Option for M1: release the client as broken on any wrapper error, or assert an empty context at transaction start.
+6. **Rollback-failure path untested (T-23).** If `ROLLBACK` itself failed without the connection dying, Kysely would release the connection back to the pool. This could not be induced. Option for M1: release the client as broken on any wrapper error, or assert an empty context at transaction start.
 7. **Kysely's control connection.** For query cancellation via abort signals, Kysely can open a separate connection with the pool's credentials (`controlClient`, read from source; not exercised). It runs only `pg_cancel_backend`/`pg_terminate_backend`. Don't pass abort signals into tenant transactions without review.
 8. **Status columns type as `string`.** `text` + `check` (DB-8) generates `string`, not a literal union. Use kysely-codegen `--overrides` or a typed constant set in step 2.
 9. **Types are generated as the owner.** Codegen must introspect as `schoolos_owner` (column visibility follows privileges). CI needs a migrated database to run `--verify`.
@@ -148,12 +148,12 @@ No test was skipped, relaxed, or marked passed without running.
 
 ## 7. Recommendation
 
-**Accept ADR-0014, with one amendment to its rules.** All 12 validation rows pass, including the negative controls. The tools themselves (dbmate, Kysely, node-postgres) are suitable.
+**Accepted 2026-11-02** with the amended wrapper. All 12 validation rows pass, including the negative controls.
 
-The amendment: ADR-0014 currently says "Kysely instances are only constructed inside those wrappers, bound to the transaction's single `pg` client." The spike showed that this binding, when built over a raw client, lets a nested `transaction()` commit the outer transaction early and lets an escaped handle read another tenant's data. Kysely's own `Transaction` already prevents both (compile-time `never` types and runtime errors) while still pinning every query to one pooled connection. Proposed wording:
+Accepted wording:
 
-> `src/platform/db` holds the only `pg.Pool` and the only `Kysely` instance. `withTenant`/`withUser`/`withSystem` open a Kysely-managed transaction (`db.transaction().execute`), set context with `set_config(..., true)` as the first statement, and pass handlers only the `Transaction` object. Handlers never receive the pool, the root `Kysely` instance, or a raw `pg` client.
+> `src/platform/db` holds the only `pg.Pool` and the only `Kysely` instance. `withTenant`/`withUser`/`withSystem` open a Kysely-managed transaction (`db.transaction().execute`), set context with `set_config(..., true)` as the first statement, and pass handlers only the `Transaction` object. Handlers never receive the pool, the root `Kysely` instance, or a raw `pg` client. Nested transactions and post-completion handle use are rejected. If a database operation fails, the wrapper fails the request even if the handler caught the original exception. Tenant context is transaction-local; missing context denies access.
 
-Additional rules recommended for step 2 (from §4 and §6): one non-transactional statement per `transaction:false` migration; `EXECUTE` granted before definer ownership transfer; wrapper fails the request if the transaction is aborted before commit; only `src/platform/db` may call `set_config`/`SET` on `app.*`; `kysely-codegen --verify` in CI against a freshly migrated database; `--migration-lock` in the pipeline.
+The spike wrapper implements the aborted-transaction probe. Handle-lifetime and swallowed-error tests live in `tests/04-kysely-transactions.test.ts`.
 
-ADR-0014 status is left as **Proposed** until the owner reviews this report. If accepted, update ADR-0014's status and rules, `M1_IMPLEMENTATION_PLAN.md` §2, `OPEN_QUESTIONS.md` T-13, and `ARCHITECTURE_READINESS_REVIEW.md` D-4.
+Remaining unvalidated environmental risks (do not treat as proven): AWS RDS role/RLS behaviour, production TLS, failed-rollback dirty pooled connections, cluster-wide role migration collisions in CI. Tracked as T-21–T-24.

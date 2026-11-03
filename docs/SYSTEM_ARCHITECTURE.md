@@ -108,7 +108,7 @@ src/platform/            Cross-cutting: config, logging, crypto, tenant context,
 Rules:
 - Handlers never contain business logic or SQL.
 - Modules never import from `src/providers/*` directly; they depend on interfaces in `src/modules/<module>/ports.ts`, wired at startup.
-- Only `src/platform/db` opens database connections, and it always sets tenant context. Application modules never create their own connections or query-builder instances ([ADR-0014](DECISIONS/0014-database-tooling.md)).
+- Only `src/platform/db` opens database connections, and it always sets tenant context. It holds one `pg.Pool` and one root Kysely instance; handlers receive only a Kysely `Transaction`. Application modules never create their own connections or query-builder instances ([ADR-0014](DECISIONS/0014-database-tooling.md)).
 
 ### 5.2 REST API
 
@@ -133,7 +133,7 @@ This is a separate **device gateway** process introduced in M6/M7. It shares the
 - **Supabase is not used as a database** and its generated Data API is not used. All SchoolOS data, including authorization data, lives in RDS.
 - **UUIDv7 primary keys are generated in the application**; the schema doesn't depend on native PostgreSQL UUIDv7.
 - **Connection pooling:** a standard `pg` `Pool` per process with direct private TLS connectivity to RDS. No RDS Proxy or external pooler until a measured need is recorded in an ADR, and only after the `SET LOCAL` and cross-tenant concurrency tests pass against it.
-- **Tooling (proposed, pending spike):** dbmate for plain SQL migrations, Kysely for typed queries, node-postgres for connections and transactions. Direct SQL is kept for RLS, policies, triggers, functions, advisory locks, and audit operations ([ADR-0014](DECISIONS/0014-database-tooling.md)).
+- **Tooling:** dbmate for plain SQL migrations, Kysely for typed queries, node-postgres for the pool and transactions. Direct SQL is kept for RLS, policies, triggers, functions, advisory locks, and audit operations ([ADR-0014](DECISIONS/0014-database-tooling.md)).
 - Schema migrations are versioned SQL files, reviewed like code, applied by CI/CD, never by hand in production.
 - RLS enabled and **forced** on all tenant-scoped tables.
 - Application connects as a non-owner role (`app_user`) that cannot bypass RLS. Migrations run as a separate owner role.

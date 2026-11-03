@@ -23,7 +23,7 @@ Rules:
 | [0011](0011-production-infrastructure-separation.md) | Production infrastructure separate from personal/home infrastructure | Accepted |
 | [0012](0012-tooling.md) | Tooling: pnpm, Node.js LTS, strict TypeScript, single Next.js app, Tailwind CSS and shadcn/ui | Accepted |
 | [0013](0013-database-hosting-postgres-version-uuid-pooling.md) | AWS RDS PostgreSQL 18, Supabase for Auth only, app-generated UUIDv7, standard pg pooling | Accepted |
-| [0014](0014-database-tooling.md) | Database tooling: dbmate, Kysely, node-postgres | Proposed (pending spike) |
+| [0014](0014-database-tooling.md) | Database tooling: dbmate, Kysely, node-postgres | Accepted |
 | [0015](0015-organization-resolution.md) | Organization explicit in URL paths; per-request membership and permission checks | Accepted |
 | [0016](0016-session-model.md) | Session model: Supabase identity + TOTP, SchoolOS-authoritative server-side sessions | Proposed (pending spike; fixed requirements binding) |
 | [0017](0017-audit-log-design.md) | Audit log: hash-chained core, redactable details, signed checkpoints, prefix purge, platform chain | Accepted |

@@ -41,7 +41,7 @@ Method: STRIDE per component, re-reviewed at each milestone that adds an externa
 | # | Threat | Category | Mitigation |
 | --- | --- | --- | --- |
 | T1 | Cross-tenant data access via IDOR or missing tenant filter | Info disclosure / EoP | Server-side `authorize()` on every route; RLS forced on all tenant tables; composite tenant FKs; automated cross-tenant tests in CI |
-| T2 | Tenant context leak across pooled DB connections | Info disclosure | `SET LOCAL` only inside transactions; lint rule banning session `SET`; test that runs concurrent requests across tenants |
+| T2 | Tenant context leak across pooled DB connections | Info disclosure | `SET LOCAL` / `set_config(..., true)` only inside Kysely-managed transactions; handlers receive only a `Transaction` (never the pool, root Kysely, or raw client); lint rule banning session `SET`; aborted-transaction probe so swallowed DB errors cannot succeed; concurrent cross-tenant tests (ADR-0014) |
 | T3 | Staff account takeover | Spoofing | MFA required for privileged roles; rate limiting and lockout; breached-password checks if IdP supports; session binding and short idle timeout |
 | T4 | Privilege escalation via role management | EoP | Only `member.manage` holders can change roles; cannot grant permissions they do not hold; all changes audited and notified to org owners |
 | T5 | Abuse of destructive commands (mass powerwash) | Tampering / DoS | Approval workflow; bulk caps; step-up auth; rate limits; delayed execution window with cancel for bulk destructive commands; alert org owners |
