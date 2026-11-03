@@ -2,17 +2,17 @@
 
 > **Status:** Proposed. This is a design for review, not a migration. Column lists are indicative; exact types, indexes, and constraints are finalized in M1–M3 migrations with tests.
 >
-> **2026-11-02 update:** Aligned with ratified decisions [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) (RDS PostgreSQL 18, app-generated UUIDv7, `pg` pool), [ADR-0016](DECISIONS/0016-session-model.md) (session tables), [ADR-0017](DECISIONS/0017-audit-log-design.md) (audit design), and [ADR-0019](DECISIONS/0019-support-access-grants.md) (support grants). Added tables identified in the readiness review (DB-5).
+> **2026-11-02 update:** Aligned with ratified decisions [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) (RDS PostgreSQL 18, app-generated UUIDv7, `pg` pool), [ADR-0020](DECISIONS/0020-uuidv7-node-crypto.md) (Node `crypto.randomUUIDv7` helper), [ADR-0016](DECISIONS/0016-session-model.md) (session tables), [ADR-0017](DECISIONS/0017-audit-log-design.md) (audit design), and [ADR-0019](DECISIONS/0019-support-access-grants.md) (support grants). Added tables identified in the readiness review (DB-5).
 
 ## 1. Conventions
 
 - **Database:** AWS RDS for PostgreSQL 18; Docker `postgres` at the same pinned version for local and CI. Supabase hosts no SchoolOS tables.
-- **Primary keys:** `uuid`, column `id`, **UUIDv7 generated in the application** (RFC 9562). The schema doesn't rely on a native PostgreSQL UUIDv7 function.
+- **Primary keys:** `uuid`, column `id`, **UUIDv7 generated in the application** (RFC 9562) with Node.js `crypto.randomUUIDv7()` through a centralized helper ([ADR-0020](DECISIONS/0020-uuidv7-node-crypto.md)). The schema doesn't rely on a native PostgreSQL UUIDv7 function.
 - **Tenant key:** every tenant-scoped table has `organization_id uuid not null references organizations(id)`.
 - **Composite foreign keys for tenant safety:** child tables reference parents with `(organization_id, parent_id)` → parent's `unique (organization_id, id)`. This makes cross-tenant references impossible at the schema level, not just by convention.
 - **Timestamps:** `created_at timestamptz not null default now()`, `updated_at timestamptz` where mutable. All times UTC.
 - **Soft state, not soft delete:** records have explicit lifecycle status columns; hard deletion is performed by retention/deletion jobs and recorded.
-- **Enums:** PostgreSQL `text` with `check` constraints (easier to evolve than native enums).
+- **Enums:** PostgreSQL `text` with `check` constraints (easier to evolve than native enums). kysely-codegen types those columns as `string`; application `as const` definitions and derived TypeScript unions are the typed API. Catalog tests must fail if a check constraint drifts from those constants. Do not use kysely-codegen `--overrides` as the source of truth.
 - **Provider data:** provider identifiers are stored in dedicated columns; raw payloads in `jsonb` only where needed for provenance, with retention.
 - **No student PII in free-text fields** controlled by the system (logs, error messages).
 
@@ -304,7 +304,7 @@ create policy tenant_isolation on devices
 - The application DB role (`app_user`) is not the table owner and does not have `BYPASSRLS`.
 - Connection pooling uses a standard `pg` `Pool` with direct private connectivity to RDS (ADR-0013). Each tenant transaction runs on one checked-out connection; session-level `SET` is forbidden (lint + review rule) to prevent context leaking between pooled connections. Any future external pooler (e.g. RDS Proxy) must pass the `SET LOCAL` and cross-tenant concurrency tests first.
 - In implementation, the predicate reads the setting through a `STABLE` function (e.g. `organization_id = (select app.current_org_id())`) so it's evaluated once per statement (review DB-2).
-- All tenant queries run inside the explicit `withTenant` / `withUser` / `withSystem` wrappers in `src/platform/db`. That module holds one pool and one root Kysely; handlers receive only a Kysely `Transaction`. Application modules never open connections (ADR-0014). Missing tenant context matches no rows.
+- All tenant queries run inside the explicit `withTenant` / `withUser` / `withSystem` wrappers in `src/platform/db`. That module holds one pool and one root Kysely; handlers receive only a Kysely `Transaction`. Application modules never open connections (ADR-0014). Wrappers assert empty tenant context before `set_config` and destroy the client when commit/rollback is uncertain ([ADR-0021](DECISIONS/0021-transaction-connection-safety.md)). Missing tenant context matches no rows.
 
 ### 4.2 Roles
 
@@ -314,8 +314,10 @@ create policy tenant_isolation on devices
 | `app_user` | Web + worker runtime | Enforced |
 | `app_credentials_reader` | Worker-only access to `integration_credentials` (M2) | Enforced + table grant limited |
 | `app_auth` | Auth module access to `user_sessions` and `user_session_credentials` (M1) | Table grants limited to auth tables |
-| `audit_maintainer` | Prefix-only audit purge and checkpoint writes (ADR-0017); created and tested in M1, scheduled from M5 | No access outside audit tables |
+| `audit_maintainer` | Prefix-only audit purge and checkpoint writes (ADR-0017). Deferred until the audit tables are introduced in M1 Step 6; scheduled use begins in M5. Not created or tested in Step 2. | No access outside audit tables |
 | `platform_ops` | Audited cross-tenant operator queries (billing, support tooling) | **Deferred to M5**; not created until a concrete use case exists (review DB-9) |
+
+Roles are created when first needed ([ADR-0022](DECISIONS/0022-database-roles-bootstrap-and-ci.md)): `schoolos_owner` in cluster bootstrap; `app_user` in M1 step 2; `app_auth` with session tables; `audit_maintainer` with audit tables. Do not create unused roles early. Never silently accept an existing role with incorrect privileges.
 
 ### 4.3 Tests (required in M1)
 

@@ -12,7 +12,7 @@ Rules:
 | --- | --- | --- |
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-modular-monolith-nextjs-typescript.md) | Modular monolith with TypeScript and Next.js | Proposed |
-| [0003](0003-postgresql-multi-tenancy-rls.md) | PostgreSQL shared-schema multi-tenancy with RLS | Proposed |
+| [0003](0003-postgresql-multi-tenancy-rls.md) | PostgreSQL shared-schema multi-tenancy with RLS | Proposed (independent review required before acceptance) |
 | [0004](0004-authentication-provider.md) | Supabase Auth behind an internal interface; SchoolOS owns authorization | Proposed |
 | [0005](0005-control-plane-provider-separation.md) | Separate control plane from provider/OS integrations | Proposed |
 | [0006](0006-command-lifecycle.md) | Auditable command lifecycle with append-only events | Proposed |
@@ -29,3 +29,6 @@ Rules:
 | [0017](0017-audit-log-design.md) | Audit log: hash-chained core, redactable details, signed checkpoints, prefix purge, platform chain | Accepted |
 | [0018](0018-aws-infrastructure-and-deployment.md) | AWS infrastructure and deployment with cost controls | Accepted (IaC tool and egress open) |
 | [0019](0019-support-access-grants.md) | Support access via temporary grants evaluated by `authorize()` | Accepted (implementation M5) |
+| [0020](0020-uuidv7-node-crypto.md) | Application UUIDv7 via Node.js `crypto.randomUUIDv7` | Accepted |
+| [0021](0021-transaction-connection-safety.md) | Tenant-context assertions and destroy-on-uncertain-transaction-end | Accepted |
+| [0022](0022-database-roles-bootstrap-and-ci.md) | Cluster bootstrap versus database-level runtime roles | Accepted |

@@ -133,11 +133,11 @@ This is a separate **device gateway** process introduced in M6/M7. It shares the
 
 - **AWS RDS for PostgreSQL, major version 18**, in isolated private subnets in `us-east-2`. Local development and CI use the Docker official `postgres` image at the same pinned major and minor version ([ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md)).
 - **Supabase is not used as a database** and its generated Data API is not used. All SchoolOS data, including authorization data, lives in RDS.
-- **UUIDv7 primary keys are generated in the application**; the schema doesn't depend on native PostgreSQL UUIDv7.
+- **UUIDv7 primary keys are generated in the application** with Node.js `crypto.randomUUIDv7()` through a centralized helper ([ADR-0020](DECISIONS/0020-uuidv7-node-crypto.md)); the schema doesn't depend on native PostgreSQL UUIDv7.
 - **Connection pooling:** a standard `pg` `Pool` per process with direct private TLS connectivity to RDS. No RDS Proxy or external pooler until a measured need is recorded in an ADR, and only after the `SET LOCAL` and cross-tenant concurrency tests pass against it.
 - **Tooling:** dbmate for plain SQL migrations, Kysely for typed queries, node-postgres for the pool and transactions. Direct SQL is kept for RLS, policies, triggers, functions, advisory locks, and audit operations ([ADR-0014](DECISIONS/0014-database-tooling.md)).
 - Schema migrations are versioned SQL files, reviewed like code, applied by CI/CD, never by hand in production.
-- RLS enabled and **forced** on all tenant-scoped tables.
+- RLS enabled and **forced** on all tenant-scoped tables. The working design is [ADR-0003](DECISIONS/0003-postgresql-multi-tenancy-rls.md), which remains **Proposed** and requires independent review before acceptance.
 - Application connects as a non-owner role (`app_user`) that cannot bypass RLS. Migrations run as a separate owner role.
 - Append-only tables (audit log, command state transitions) have `UPDATE`/`DELETE` revoked from `app_user`.
 - Large/high-volume tables (security events, telemetry snapshots) are designed for time-based partitioning, introduced when volume requires.
