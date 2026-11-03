@@ -105,6 +105,8 @@ src/jobs/                Job definitions executed by the worker
 src/platform/            Cross-cutting: config, logging, crypto, tenant context, errors
 ```
 
+M1 step 1 implements `app/` (landing, status, `GET /api/v1/health`), `src/platform/config`, `src/platform/log`, `src/platform/http`, `src/platform/security`, `src/components`, and `src/worker.ts`. Domain modules, database access, auth, and providers are not created yet. See [`DEVELOPMENT.md`](DEVELOPMENT.md).
+
 Rules:
 - Handlers never contain business logic or SQL.
 - Modules never import from `src/providers/*` directly; they depend on interfaces in `src/modules/<module>/ports.ts`, wired at startup.

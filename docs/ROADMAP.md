@@ -57,7 +57,7 @@ Risks: Google verification lead time; device licensing cost; partner-program req
 
 **Goal:** Secure multi-tenant foundation with no device features. Requires no Google API access.
 
-Detailed plan: [`M1_IMPLEMENTATION_PLAN.md`](M1_IMPLEMENTATION_PLAN.md). Pre-M1 findings: [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md). The cloud provider is decided (AWS, ADR-0018). Staging infrastructure still depends on the IaC tool (T-16) and egress design (T-17); all other M1 work does not.
+Detailed plan: [`M1_IMPLEMENTATION_PLAN.md`](M1_IMPLEMENTATION_PLAN.md). Pre-M1 findings: [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md). The cloud provider is decided (AWS, ADR-0018). Staging infrastructure still depends on the IaC tool (T-16) and egress design (T-17); all other M1 work does not. Application foundation (plan step 1) is implemented; M1 as a whole is not complete.
 
 Scope:
 - Next.js + TypeScript app, worker entrypoint, PostgreSQL migrations, local Docker Compose for DB.

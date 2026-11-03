@@ -9,7 +9,6 @@ out/
 build/
 dist/
 *.tsbuildinfo
-next-env.d.ts
 
 # Go (future agent)
 /agent/bin/

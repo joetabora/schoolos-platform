@@ -1,6 +1,6 @@
 # M1 Implementation Plan: Platform Skeleton
 
-- **Status:** Ready to start. Decisions D-1 to D-8 were ratified on 2026-11-02 (§2). Two decisions remain Proposed until their compatibility spikes pass: database tooling (ADR-0014) and the Supabase session flow (ADR-0016). Those spikes are M1 step 0.
+- **Status:** M1 step 1 (application foundation) is implemented. Local development instructions: [`DEVELOPMENT.md`](DEVELOPMENT.md). Later M1 steps are not started. ADR-0014 was accepted on `spike/db-tooling` (`af58a92`) and is **not** merged into this branch; ADR-0016 remains Proposed pending step 0b.
 - **Milestone:** M1 ([`ROADMAP.md`](ROADMAP.md#m1-platform-skeleton))
 - **Inputs:** [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md), [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md), [`DATA_MODEL.md`](DATA_MODEL.md), [`SECURITY_MODEL.md`](SECURITY_MODEL.md)
 - **Google dependency:** **None.** M1 contains no provider code, no device tables, and no Google credentials. It can be completed in full before the M0 Google spike finishes.
@@ -39,7 +39,7 @@ Background is in the readiness review, §7. Decisions were ratified 2026-11-02.
 | D-2 Hosting | AWS `us-east-2`; RDS PostgreSQL; Supabase for Auth only; ECS Fargate web + worker behind ALB; Secrets Manager + KMS | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md), [ADR-0018](DECISIONS/0018-aws-infrastructure-and-deployment.md) | Accepted (IaC tool and egress open: T-16, T-17) | 2, 10 |
 | D-3 Postgres and UUIDs | PostgreSQL 18 (18.6 pinned in RDS, Docker, CI); UUIDv7 generated in the app | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted | 2 |
 | Pooling | Standard `pg` Pool, direct private RDS connectivity; no RDS Proxy until needed | [ADR-0013](DECISIONS/0013-database-hosting-postgres-version-uuid-pooling.md) | Accepted | 2 |
-| D-4 DB tooling | dbmate + Kysely + node-postgres; direct SQL for RLS/policies/triggers/functions/locks/audit | [ADR-0014](DECISIONS/0014-database-tooling.md) | **Proposed: spike required** | 2 |
+| D-4 DB tooling | dbmate + Kysely + node-postgres; direct SQL for RLS/policies/triggers/functions/locks/audit | [ADR-0014](DECISIONS/0014-database-tooling.md) | Accepted on `spike/db-tooling` (`af58a92`); unmerged | 2 |
 | D-5 Audit | Opaque-ID hashed core, redactable details, KMS-signed checkpoints, prefix purge, platform chain | [ADR-0017](DECISIONS/0017-audit-log-design.md) | Accepted | 6 |
 | D-6 Org resolution | Org in URL path; membership + permissions verified per request | [ADR-0015](DECISIONS/0015-organization-resolution.md) | Accepted | 4 |
 | D-7 Support access | Temporary grants via `authorize()`; no support membership | [ADR-0019](DECISIONS/0019-support-access-grants.md) | Accepted (M5) | — |
@@ -87,7 +87,7 @@ tests/
 - Formatter, type check, lint, and tests run in CI on every PR.
 - Dependency vulnerability scan and secret scan in CI.
 - `.env.example` documents every variable; real `.env*` files are git-ignored (already configured).
-- Startup config validation refuses to boot if, for example, `AUTH_PROVIDER=fake` is set with `NODE_ENV=production` or the environment is staging (TST-8).
+- Startup config validation refuses to boot if `AUTH_PROVIDER=fake` is set when `APP_ENV` is not `local` or `test` (TST-8). The guard uses `APP_ENV` rather than `NODE_ENV` because Next.js sets `NODE_ENV=production` during `next build`.
 
 **Route wrapper (single path for every API route):**
 
@@ -305,9 +305,9 @@ Each step is one or a few reviewable PRs, with an exit check. Don't start a step
 
 | Step | Work | Blocking decisions | Exit check |
 | --- | --- | --- | --- |
-| **0a** | **ADR-0014 compatibility spike** (2 days, throwaway branch, Docker `postgres:18.6`): dbmate + Kysely + `pg` against the seven checks in ADR-0014 | — | Results recorded in ADR-0014; status Accepted or superseded |
+| **0a** | **ADR-0014 compatibility spike** (2 days, throwaway branch, Docker `postgres:18.6`): dbmate + Kysely + `pg` against the seven checks in ADR-0014 | — | **Done** on `spike/db-tooling` (`af58a92`). Merge is a separate PR; this branch does not include it. |
 | **0b** | **ADR-0016 compatibility spike** (2 days, non-production Supabase project): server-side sign-in, TOTP, JWKS verification, refresh, revocation, Data API disabled, local/CI auth approach | Supabase dev project exists | Results recorded in ADR-0016; status Accepted or amended |
-| **1** | Foundation: Next.js + TS strict + Tailwind + shadcn/ui, pinned Node.js 26 and pnpm, lint with import boundaries, formatter, test runner, Docker Compose `postgres:18.6`, config validation, logger with redaction, CI pipeline (type, lint, unit, secret scan, dependency scan) | ADR-0012 (Accepted) | CI green on an empty app; `/api/v1/health` returns 200 |
+| **1** | Foundation: Next.js + TS strict + Tailwind + shadcn/ui, pinned Node.js 26 and pnpm, lint with import boundaries, formatter, test runner, config validation, logger with redaction, CI pipeline (type, lint, unit, secret scan, dependency scan). Docker Compose `postgres:18.6` is deferred to step 2 (no database in this step). | ADR-0012 (Accepted) | **Complete** on `feature/m1-application-foundation`. App runs locally; `/api/v1/health` returns 200; `pnpm` format, lint, typecheck, test, secret-scan, and production build pass. See [`DEVELOPMENT.md`](DEVELOPMENT.md). |
 | **2** | Database baseline: DB roles, `app` schema and context functions, dbmate migrations, `pg` Pool + `withTenant`/`withUser`/`withSystem` + Kysely binding, app-side UUIDv7, the RLS coverage test (TST-1), no-context test, migration test (TST-6) | ADR-0013 (Accepted), ADR-0014 (after 0a) | Coverage test fails on a deliberately unprotected table and passes once RLS is added |
 | **3** | Identity: `users`, `user_sessions`, `user_session_credentials`, `AuthProvider`, fake adapter + startup guard (TST-8), Supabase adapter, server-side sign-in, JWT verification, TOTP MFA, SchoolOS session enforcement (idle/absolute/revocation), fresh-MFA step-up, rate limiting, security headers, CSRF/origin check | ADR-0016 (after 0b) | Sign-in + MFA works locally; session, JWT-rejection, and no-browser-token tests pass |
 | **4** | Tenancy core: `organizations`, `organization_settings`, `schools`, operator CLI, route wrapper with org resolution, `/me`, `/me/organizations`, org and school endpoints, route-isolation harness (TST-2) | D-6 | Table + route isolation suites pass for these tables and routes |
@@ -318,7 +318,7 @@ Each step is one or a few reviewable PRs, with an exit check. Don't start a step
 | **9** | Hardening: pool-leak concurrency test (TST-3), audit throughput check (A-6, target 50 audited writes/s per org), log redaction test, header test, threat-model review of the M1 surface | — | All suites green; threat-model review recorded |
 | **10** | AWS environments: accounts, budgets and anomaly detection first, then IaC for `dev` and `staging` (VPC, ALB, ECS Fargate web + worker, RDS PostgreSQL 18, Secrets Manager, KMS keys including the audit signing key, ECR, CloudWatch), GitHub OIDC deploy roles, migration task, pipeline deploys, TST-3 against `pg` Pool → RDS, staging smoke | ADR-0018 (Accepted); T-16 IaC tool; T-17 egress | Staging deployed by pipeline only; budgets active; isolation suite passes against staging DB; no public IPs on tasks or RDS |
 
-Steps 0a and 1–2 need only local Docker. Step 0b needs a non-production Supabase project. Steps 3–9 run on `local` + CI. Only step 10 creates AWS resources, and it requires explicit approval before anything is provisioned.
+Step 1 needs only Node.js and pnpm. Steps 0a and 2 need local Docker. Step 0b needs a non-production Supabase project. Steps 3–9 run on `local` + CI. Only step 10 creates AWS resources, and it requires explicit approval before anything is provisioned.
 
 ## 5. M1 definition of done
 
