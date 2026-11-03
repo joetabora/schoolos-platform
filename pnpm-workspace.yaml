@@ -1,0 +1,6 @@
+# Single Next.js app (ADR-0012: no monorepo). pnpm 12 settings live here.
+minimumReleaseAge: 10080
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true

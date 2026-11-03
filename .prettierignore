@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+node_modules
+.next
+coverage
+out
+dist
+*.tsbuildinfo
+docs
+spikes
+.git
